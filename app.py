@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # StudyFyn – KI-Lernhelfer
 # =============================================================================
 
@@ -13,14 +13,14 @@ from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as st_components
 import google.generativeai as genai
-import pytesseract
+import easyocr
+import numpy as np
 from PIL import Image, ImageOps
 
 # =============================================================================
 # KONFIGURATION
 # =============================================================================
 
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 
@@ -497,7 +497,11 @@ if active_page == "home":
             st.session_state.last_uploaded_file = uploaded_file
             st.session_state.last_image = image
             try:
-                text = pytesseract.image_to_string(image, lang="deu")
+                reader = easyocr.Reader(['de'])
+                # PIL-Image in numpy array konvertieren (RGB)
+                img_np = np.array(image.convert('RGB'))
+                result = reader.readtext(img_np)
+                text = ' '.join([item[1] for item in result])
             except Exception as e:
                 text = "Fehler: " + str(e)
             st.session_state.last_text = text
