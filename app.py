@@ -237,11 +237,13 @@ st.markdown(f"""
 }}
 .nav-item {{
     display: flex; flex-direction: column; align-items: center;
-    text-decoration: none; font-size: 1.7em; line-height: 1;
+    text-decoration: none !important; font-size: 1.7em; line-height: 1;
     padding: 0.2em 0.6em; border-radius: 1.5em; transition: background 0.2s;
 }}
+.nav-item:hover {{ text-decoration: none !important; }}
 .nav-item.active {{
     background: rgba(255,255,255,0.18); color: #fff !important;
+    text-decoration: none !important;
 }}
 .headline {{
     font-size: 1.25em !important; margin-top: -0.3em !important;
@@ -830,7 +832,9 @@ elif active_page == "ranking":
         return RANKS[-2]
 
     session_xp = st.session_state.get("xp", 0)
-    user_name = st.session_state.get("sett_name", "Du") or "Du"
+    user_name = db_get_username(_user_id) or "Du"
+    # Sync session state damit der Name überall aktuell ist
+    st.session_state["sett_name"] = user_name
 
     # Nur ein Demo-Eintrag bei Großmeister, alle anderen Plätze sind echt
     all_users = sorted(
