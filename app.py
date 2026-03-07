@@ -118,21 +118,23 @@ db_init_user_profiles()
 
 # --- Geräte-ID: automatisch pro Browser gesetzt, kein Login nötig ---
 _cm = stx.CookieManager(key="studyfyn_cm")
-if "user_id" not in st.session_state:
-    _all_cookies = _cm.get_all()
-    _uid = (_all_cookies.get("studyfyn_uid") if isinstance(_all_cookies, dict) else None) or ""
-    if not _uid:
-        _uid = str(uuid.uuid4())
-        _cm.set("studyfyn_uid", _uid, key="set_uid_cookie")
-    st.session_state["user_id"] = _uid
-_user_id = st.session_state["user_id"]
+# auf jedem Seitenaufruf versuchen wir, die ID aus dem Cookie zu lesen
+_uid = _cm.get("studyfyn_uid") or ""
+if not _uid:
+    _uid = str(uuid.uuid4())
+    # setzen ohne Schlüsselname ist ausreichend
+    _cm.set("studyfyn_uid", _uid)
+# speichern auch in der Session für einfachen Zugriff
+st.session_state["user_id"] = _uid
+_user_id = _uid
+# sicherstellen, dass ein Profil existiert
 db_ensure_user(_user_id)
 
 # XP und Name beim Start aus DB laden
 if "xp" not in st.session_state:
     st.session_state["xp"] = db_get_xp(_user_id)
-if "sett_name" not in st.session_state:
-    st.session_state["sett_name"] = db_get_username(_user_id)
+# Name immer direkt aus DB holen, damit Änderungen sofort sichtbar
+st.session_state["sett_name"] = db_get_username(_user_id)
 
 # --- Packs ---
 def db_save_pack(name, cards_json, folder_id=None, user_id='legacy'):
