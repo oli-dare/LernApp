@@ -117,11 +117,7 @@ init_db()
 db_init_user_profiles()
 
 # --- Geräte-ID: automatisch pro Browser gesetzt, kein Login nötig ---
-@st.cache_resource
-def _get_cookie_manager():
-    return stx.CookieManager(key="studyfyn_cm")
-
-_cm = _get_cookie_manager()
+_cm = stx.CookieManager(key="studyfyn_cm")
 if "user_id" not in st.session_state:
     _all_cookies = _cm.get_all()
     _uid = (_all_cookies.get("studyfyn_uid") if isinstance(_all_cookies, dict) else None) or ""
