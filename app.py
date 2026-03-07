@@ -1,98 +1,42 @@
-﻿# Nutzerprofil (XP + Name) – pro Gerät, automatisch via Browser-Cookie
-def db_init_user_profiles():
-    conn = get_db()
-    conn.execute('''CREATE TABLE IF NOT EXISTS user_profiles (
-        user_id TEXT PRIMARY KEY,
-        xp INTEGER NOT NULL DEFAULT 0,
-        username TEXT NOT NULL DEFAULT "Du"
-    )''')
-    conn.commit()
-    conn.close()
-
-
-# Nur noch auf explizite Aktion Account anlegen
-def db_ensure_user(user_id):
-    conn = get_db()
-    exists = conn.execute('SELECT 1 FROM user_profiles WHERE user_id=?', (user_id,)).fetchone()
-    conn.close()
-    return bool(exists)
-
-def db_get_xp(user_id):
-    conn = get_db()
-    row = conn.execute('SELECT xp FROM user_profiles WHERE user_id=?', (user_id,)).fetchone()
-    conn.close()
-    return row['xp'] if row else 0
-
-def db_set_xp(xp, user_id):
-    conn = get_db()
-    # Account anlegen, falls noch nicht vorhanden
-    conn.execute('''
-        INSERT INTO user_profiles (user_id, xp, username) VALUES (?, ?, "Du")
-        ON CONFLICT(user_id) DO UPDATE SET xp=excluded.xp
-    ''', (user_id, xp))
-    conn.commit()
-    conn.close()
-
-def db_get_username(user_id):
-    conn = get_db()
-    row = conn.execute('SELECT username FROM user_profiles WHERE user_id=?', (user_id,)).fetchone()
-    conn.close()
-    return row['username'] if row and row['username'] else 'Du'
-
-def db_set_username(username, user_id):
-    conn = get_db()
-    # Account anlegen, falls noch nicht vorhanden
-    conn.execute('''
-        INSERT INTO user_profiles (user_id, xp, username) VALUES (?, 0, ?)
-        ON CONFLICT(user_id) DO UPDATE SET username=excluded.username
-    ''', (user_id, username))
-    conn.commit()
-    conn.close()
-
-def db_get_all_users():
-    """Gibt alle User-Profile zurück, sortiert nach XP (absteigend)."""
-    conn = get_db()
-    rows = conn.execute(
-        'SELECT user_id, xp, username FROM user_profiles ORDER BY xp DESC'
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
 # =============================================================================
-# StudyFyn - KI-Lernhelfer
+# StudyFyn – KI-Lernhelfer
 # =============================================================================
 
-import streamlit as st
-import streamlit.components.v1 as st_components
-import pytesseract
-from PIL import Image, ImageOps
-import google.generativeai as genai
-import random
 import json
+import os
+import random
 import re
 import sqlite3
-import os
-import datetime
 import uuid
 from pathlib import Path
 
-# --- Konfiguration ---
+import streamlit as st
+import streamlit.components.v1 as st_components
+import google.generativeai as genai
+import pytesseract
+from PIL import Image, ImageOps
+
+# =============================================================================
+# KONFIGURATION
+# =============================================================================
+
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 
+DB_PATH = os.environ.get("STUDYFYN_DB_PATH") or str(Path(__file__).parent / "studyfyn_data.db")
+
 # =============================================================================
 # DATENBANK
 # =============================================================================
-DB_PATH = os.environ.get("STUDYFYN_DB_PATH")
-if not DB_PATH:
-    DB_PATH = str(Path(__file__).parent / "studyfyn_data.db")
 
 def get_db():
-    conn = sqlite3.connect(str(DB_PATH), timeout=30)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
     return conn
+
 
 def init_db():
     conn = get_db()
@@ -118,74 +62,72 @@ def init_db():
         UNIQUE(pack_id, card_idx),
         FOREIGN KEY(pack_id) REFERENCES packs(id)
     )''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS user_profiles (
+        user_id TEXT PRIMARY KEY,
+        xp INTEGER NOT NULL DEFAULT 0,
+        username TEXT NOT NULL DEFAULT "Du"
+    )''')
     # Migrationen für bestehende DBs
-    try:
-        conn.execute('ALTER TABLE packs ADD COLUMN folder_id INTEGER REFERENCES folders(id)')
-    except Exception:
-        pass
-    try:
-        conn.execute('ALTER TABLE packs ADD COLUMN user_id TEXT NOT NULL DEFAULT "legacy"')
-    except Exception:
-        pass
-    try:
-        conn.execute('ALTER TABLE folders ADD COLUMN user_id TEXT NOT NULL DEFAULT "legacy"')
-    except Exception:
-        pass
+    for stmt in [
+        'ALTER TABLE packs ADD COLUMN folder_id INTEGER REFERENCES folders(id)',
+        'ALTER TABLE packs ADD COLUMN user_id TEXT NOT NULL DEFAULT "legacy"',
+        'ALTER TABLE folders ADD COLUMN user_id TEXT NOT NULL DEFAULT "legacy"',
+    ]:
+        try:
+            conn.execute(stmt)
+        except Exception:
+            pass
     conn.commit()
     conn.close()
 
 
 init_db()
-db_init_user_profiles()
 
-# --- Geräte-ID: dauerhaft per localStorage im Browser ---
-# JS liest localStorage, schreibt die ID in den URL-Parameter 'uid'.
-# Streamlit liest sie dann zuverlässig aus st.query_params.
-st_components.html("""
-<script>
-(function() {
-    var uid = localStorage.getItem('studyfyn_uid');
-    if (!uid) {
-        uid = ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, function(c) {
-            return (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16);
-        });
-        localStorage.setItem('studyfyn_uid', uid);
-    }
-    // URL-Parameter setzen ohne Seite neu zu laden
-    var url = new URL(window.parent.location.href);
-    if (url.searchParams.get('uid') !== uid) {
-        url.searchParams.set('uid', uid);
-        window.parent.history.replaceState({}, '', url.toString());
-    }
-})();
-</script>
-""", height=0)
+# --- User-Profil-Funktionen ---
 
-_uid_from_url = st.query_params.get("uid", None)
-if _uid_from_url:
-    st.session_state["user_id"] = _uid_from_url
-elif "user_id" not in st.session_state:
-    # Fallback: noch kein JS-Round-Trip, eine Runde warten
-    if not st.session_state.get("_uid_wait"):
-        st.session_state["_uid_wait"] = True
-        st.rerun()
-    else:
-        # JS hat keine ID geliefert – neue erstellen (sehr selten)
-        _fallback_id = str(uuid.uuid4())
-        st.session_state["user_id"] = _fallback_id
-        st.query_params["uid"] = _fallback_id
+def db_get_xp(user_id):
+    conn = get_db()
+    row = conn.execute('SELECT xp FROM user_profiles WHERE user_id=?', (user_id,)).fetchone()
+    conn.close()
+    return row['xp'] if row else 0
 
 
-_user_id = st.session_state["user_id"]
-db_ensure_user(_user_id)
+def db_set_xp(xp, user_id):
+    conn = get_db()
+    conn.execute('''
+        INSERT INTO user_profiles (user_id, xp, username) VALUES (?, ?, "Du")
+        ON CONFLICT(user_id) DO UPDATE SET xp=excluded.xp
+    ''', (user_id, xp))
+    conn.commit()
+    conn.close()
 
-# XP und Name immer passend zum aktuellen Geräte-Nutzer laden
-if st.session_state.get("loaded_user_id") != _user_id:
-    st.session_state["xp"] = db_get_xp(_user_id)
-    st.session_state["sett_name"] = db_get_username(_user_id)
-    st.session_state["loaded_user_id"] = _user_id
 
-# --- Packs ---
+def db_get_username(user_id):
+    conn = get_db()
+    row = conn.execute('SELECT username FROM user_profiles WHERE user_id=?', (user_id,)).fetchone()
+    conn.close()
+    return row['username'] if row and row['username'] else 'Du'
+
+
+def db_set_username(username, user_id):
+    conn = get_db()
+    conn.execute('''
+        INSERT INTO user_profiles (user_id, xp, username) VALUES (?, 0, ?)
+        ON CONFLICT(user_id) DO UPDATE SET username=excluded.username
+    ''', (user_id, username))
+    conn.commit()
+    conn.close()
+
+
+def db_get_all_users():
+    conn = get_db()
+    rows = conn.execute('SELECT user_id, xp, username FROM user_profiles ORDER BY xp DESC').fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# --- Pack-Funktionen ---
+
 def db_save_pack(name, cards_json, folder_id=None, user_id='legacy'):
     conn = get_db()
     cur = conn.execute('INSERT INTO packs (name, cards, folder_id, user_id) VALUES (?, ?, ?, ?)',
@@ -194,6 +136,7 @@ def db_save_pack(name, cards_json, folder_id=None, user_id='legacy'):
     conn.commit()
     conn.close()
     return pack_id
+
 
 def db_load_packs(folder_id=None, user_id='legacy'):
     conn = get_db()
@@ -208,6 +151,7 @@ def db_load_packs(folder_id=None, user_id='legacy'):
     conn.close()
     return [dict(r) for r in rows]
 
+
 def db_save_progress(pack_id, card_idx, streak):
     conn = get_db()
     conn.execute('''INSERT INTO progress (pack_id, card_idx, streak) VALUES (?, ?, ?)
@@ -216,12 +160,13 @@ def db_save_progress(pack_id, card_idx, streak):
     conn.commit()
     conn.close()
 
+
 def db_load_progress(pack_id):
     conn = get_db()
-    rows = conn.execute('SELECT card_idx, streak FROM progress WHERE pack_id = ?',
-                        (pack_id,)).fetchall()
+    rows = conn.execute('SELECT card_idx, streak FROM progress WHERE pack_id = ?', (pack_id,)).fetchall()
     conn.close()
     return {r['card_idx']: r['streak'] for r in rows}
+
 
 def db_delete_pack(pack_id):
     conn = get_db()
@@ -230,13 +175,16 @@ def db_delete_pack(pack_id):
     conn.commit()
     conn.close()
 
+
 def db_move_pack(pack_id, folder_id):
     conn = get_db()
     conn.execute('UPDATE packs SET folder_id = ? WHERE id = ?', (folder_id, pack_id))
     conn.commit()
     conn.close()
 
-# --- Ordner ---
+
+# --- Ordner-Funktionen ---
+
 def db_create_folder(name, user_id='legacy'):
     conn = get_db()
     cur = conn.execute('INSERT INTO folders (name, user_id) VALUES (?, ?)', (name, user_id))
@@ -245,11 +193,13 @@ def db_create_folder(name, user_id='legacy'):
     conn.close()
     return fid
 
+
 def db_load_folders(user_id='legacy'):
     conn = get_db()
     rows = conn.execute('SELECT * FROM folders WHERE user_id = ? ORDER BY created DESC', (user_id,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
 
 def db_delete_folder(folder_id):
     conn = get_db()
@@ -258,6 +208,7 @@ def db_delete_folder(folder_id):
     conn.commit()
     conn.close()
 
+
 def db_count_packs_in_folder(folder_id, user_id='legacy'):
     conn = get_db()
     c = conn.execute('SELECT COUNT(*) as c FROM packs WHERE folder_id = ? AND user_id = ?',
@@ -265,30 +216,75 @@ def db_count_packs_in_folder(folder_id, user_id='legacy'):
     conn.close()
     return c
 
+
 # =============================================================================
-# SEITE + NAVIGATION
+# GERÄTE-ID (dauerhaft per localStorage im Browser)
 # =============================================================================
+
+st_components.html("""
+<script>
+(function() {
+    var uid = localStorage.getItem('studyfyn_uid');
+    if (!uid) {
+        uid = ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, function(c) {
+            return (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16);
+        });
+        localStorage.setItem('studyfyn_uid', uid);
+    }
+    var url = new URL(window.parent.location.href);
+    if (url.searchParams.get('uid') !== uid) {
+        url.searchParams.set('uid', uid);
+        window.parent.history.replaceState({}, '', url.toString());
+    }
+})();
+</script>
+""", height=0)
+
+_uid_from_url = st.query_params.get("uid", None)
+if _uid_from_url:
+    st.session_state["user_id"] = _uid_from_url
+elif "user_id" not in st.session_state:
+    if not st.session_state.get("_uid_wait"):
+        st.session_state["_uid_wait"] = True
+        st.rerun()
+    else:
+        _fallback_id = str(uuid.uuid4())
+        st.session_state["user_id"] = _fallback_id
+        st.query_params["uid"] = _fallback_id
+
+_user_id = st.session_state["user_id"]
+
+# XP und Name passend zum Geräte-Nutzer laden
+if st.session_state.get("loaded_user_id") != _user_id:
+    st.session_state["xp"] = db_get_xp(_user_id)
+    st.session_state["sett_name"] = db_get_username(_user_id)
+    st.session_state["loaded_user_id"] = _user_id
+
+# =============================================================================
+# NAVIGATION + GLOBALES CSS
+# =============================================================================
+
 if "page" not in st.query_params:
     st.query_params["page"] = "home"
 active_page = st.query_params.get("page", "home")
 
+
 def nav_class(page):
     return "nav-item active" if active_page == page else "nav-item"
+
+
 def nav_color(page):
     return "#ffffff" if active_page == page else "#888"
 
+
 st.markdown(f"""
 <style>
-/* Streamlit-Footer und Toolbar verstecken, damit Nav-Bar klickbar ist */
 footer {{ display: none !important; }}
 .stAppDeployButton {{ display: none !important; }}
 #MainMenu {{ display: none !important; }}
-
-/* Bottom-Padding damit Inhalt nicht hinter der Nav verschwindet */
 .stMainBlockContainer, .block-container {{ padding-bottom: 5em !important; }}
-
 .bottom-nav {{
-    position: fixed; left: 0; bottom: 0px; width: 100vw;
+    position: fixed; left: 0; bottom: 0; width: 100vw;
     display: flex; justify-content: space-around; align-items: center;
     padding: 0.6em 0 0.4em 0;
     background: rgba(30,30,30,0.97); z-index: 999999;
@@ -329,12 +325,13 @@ footer {{ display: none !important; }}
     background: linear-gradient(135deg, rgba(255,210,0,0.18), rgba(255,150,30,0.08));
     box-shadow: 0 0 10px rgba(255,210,0,0.13); font-weight: 700;
 }}
-.folder-row {{ display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 0.5em; margin-bottom: 0.5em; }}
-.folder-btn {{ flex: 1; margin: 0; padding: 0; }}
-.folder-actions {{ margin-left: 0.5em; }}
-.pack-row {{ display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 0.5em; margin-bottom: 0.5em; }}
-.pack-btn {{ flex: 1; margin: 0; padding: 0; }}
-.pack-actions {{ margin-left: 0.5em; }}
+.lib-header-row {{
+    display: flex; flex-direction: row; align-items: center;
+    justify-content: flex-start; gap: 0.7em; margin-bottom: 0.4em;
+}}
+@media (max-width: 600px) {{
+    .lib-header-row {{ flex-wrap: nowrap !important; }}
+}}
 </style>
 <div class="bottom-nav">
     <a class="{nav_class('home')}"     href="?page=home&uid={_user_id}"     style="color:{nav_color('home')};">&#127968;</a>
@@ -362,6 +359,7 @@ def build_card_queue(num_cards):
                 queue.append({"idx": random.choice(cands), "is_review": True})
     return queue
 
+
 def text_to_bullets_with_emojis(text):
     prompt = (
         "Fasse den folgenden Text als ein Oberthema (maximal 2-3 Wörter, keine Sätze!) mit 3-6 kurzen, knappen Unterpunkten zusammen. "
@@ -377,6 +375,7 @@ def text_to_bullets_with_emojis(text):
         return [line.strip() for line in response.text.split("\n") if line.strip()]
     except Exception as e:
         return [f"Fehler bei der KI-Verarbeitung: {e}"]
+
 
 def generate_srs_cards(topic, num_cards):
     prompt = (
@@ -411,6 +410,7 @@ def generate_srs_cards(topic, num_cards):
         st.error(f"Fehler bei der Kartenerstellung: {e}")
         return []
 
+
 def make_lueckentext(merke_dir, correct_answer):
     answer_clean = re.sub(r'\*\*', '', correct_answer).strip()
     if not answer_clean:
@@ -423,12 +423,37 @@ def make_lueckentext(merke_dir, correct_answer):
         result = merke_dir.rstrip('.').rstrip() + ': ______'
     return result
 
+
 def check_answer(user_input, correct_answer):
     return user_input.strip().lower() == re.sub(r'\*\*', '', correct_answer).strip().lower()
 
-# =============================================================================
-# PACK ÖFFNEN (shared helper)
-# =============================================================================
+
+def handle_answer(correct, card_idx, streak, mastered, xp, cur_streak, pid):
+    """Verarbeitet eine richtige oder falsche Antwort. Gibt (xp_gain,) zurück."""
+    if correct:
+        ns = cur_streak + 1
+        streak[card_idx] = ns
+        st.session_state.streak = streak
+        xp_gain = 0
+        if cur_streak == 0:
+            xp_gain += 30
+        if ns >= 7 and cur_streak < 7:
+            st.session_state.mastered = mastered + 1
+            xp_gain += 100
+        st.session_state.xp = xp + xp_gain
+        db_set_xp(st.session_state.xp, _user_id)
+        st.session_state.last_xp_gain = xp_gain
+        db_save_progress(pid, card_idx, ns)
+        st.session_state.card_mode = "correct"
+    else:
+        streak[card_idx] = 0
+        st.session_state.streak = streak
+        st.session_state.last_xp_gain = 0
+        db_save_progress(pid, card_idx, 0)
+        st.session_state.card_mode = "wrong"
+    st.rerun()
+
+
 def open_pack(pack):
     cards = json.loads(pack["cards"])
     progress = db_load_progress(pack["id"])
@@ -450,6 +475,7 @@ def open_pack(pack):
         st.session_state.card_mode = "merke_dir"
     st.session_state.pack_started = True
     st.rerun()
+
 
 # =============================================================================
 # SEITE: HOME
@@ -473,9 +499,8 @@ if active_page == "home":
             try:
                 text = pytesseract.image_to_string(image, lang="deu")
             except Exception as e:
-                st.session_state.last_text = "Fehler: " + str(e)
-            else:
-                st.session_state.last_text = text
+                text = "Fehler: " + str(e)
+            st.session_state.last_text = text
 
         image = st.session_state.get("last_image")
         text = st.session_state.get("last_text", "")
@@ -508,11 +533,7 @@ if active_page == "home":
             )
 
             if st.button("Auswahl bestätigen"):
-                num_cards_map = {
-                    "🚀 Quick Pack (5-7 Karten)": 6,
-                    "🌟 Focus Pack (10-15 Karten)": 12,
-                }
-                num_cards = num_cards_map.get(pack_option, 6)
+                num_cards = 6 if "Quick" in pack_option else 12
                 main_topic = bullets[0] if bullets else "Thema"
                 with st.spinner("KI erstellt deine Lernkarten..."):
                     cards = generate_srs_cards(main_topic, num_cards)
@@ -539,7 +560,6 @@ if active_page == "home":
 # =============================================================================
 elif active_page == "packs":
 
-    # --- Zurück-Button bei aktiver Lernsession ---
     if st.session_state.get("pack_started", False):
         if st.button("⬅️ Zurück"):
             st.session_state.pack_started = False
@@ -561,12 +581,6 @@ elif active_page == "packs":
                     st.rerun()
         else:
             st.markdown("""
-            <style>
-            .lib-header-row { display: flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 0.7em; margin-bottom: 0.4em; }
-            @media (max-width: 600px) {
-                .lib-header-row { flex-wrap: nowrap !important; }
-            }
-            </style>
             <div class="lib-header-row">
                 <span class="headline">Bibliothek</span>
                 <span style="display:inline-block;">""", unsafe_allow_html=True)
@@ -589,18 +603,18 @@ elif active_page == "packs":
                     st.session_state.creating_folder = False
                     st.rerun()
 
-        # ---- Ordner anzeigen (nur auf Root-Ebene) ----
+        # ---- Ordner anzeigen (nur Root-Ebene) ----
         if not current_folder:
             folders = db_load_folders(_user_id)
             for folder in folders:
                 fid = folder["id"]
                 fname = folder["name"]
                 fcount = db_count_packs_in_folder(fid, _user_id)
-                folder_row = st.container(border=True)
-                with folder_row:
-                    cols = st.columns([10,1])
+                with st.container(border=True):
+                    cols = st.columns([10, 1])
                     with cols[0]:
-                        if st.button(f"📁 {fname}  ·  {fcount} Paket{'e' if fcount != 1 else ''}", key=f"fopen_{fid}", use_container_width=True):
+                        if st.button(f"📁 {fname}  ·  {fcount} Paket{'e' if fcount != 1 else ''}",
+                                     key=f"fopen_{fid}", use_container_width=True):
                             st.session_state.current_folder = fid
                             st.rerun()
                     with cols[1]:
@@ -613,10 +627,8 @@ elif active_page == "packs":
         packs = db_load_packs(folder_id=current_folder, user_id=_user_id)
         all_folders = db_load_folders(_user_id)
 
-        if not packs and not (not current_folder and db_load_folders(_user_id)):
+        if not packs and not (not current_folder and all_folders):
             st.info("Noch keine Pakete vorhanden. Erstelle ein neues über ➕ oder auf der Startseite.")
-
-
 
         for pack in packs:
             pack_id = pack["id"]
@@ -625,23 +637,18 @@ elif active_page == "packs":
             progress = db_load_progress(pack_id)
             total = len(cards)
             mastered_count = sum(1 for s in progress.values() if s >= 7)
-            mastered_pct = int((mastered_count / total) * 100) if total else 0
 
-            pack_row = st.container(border=True)
-            with pack_row:
-                cols = st.columns([10,1])
+            with st.container(border=True):
+                cols = st.columns([10, 1])
                 with cols[0]:
-                    pack_btn = st.button(
+                    if st.button(
                         f"📦 {name}\n{total} Karten · {mastered_count}/{total} gemeistert",
-                        key=f"packbtn_{pack_id}",
-                        use_container_width=True,
+                        key=f"packbtn_{pack_id}", use_container_width=True,
                         help=f"{mastered_count} von {total} Karten gemeistert"
-                    )
-                    if pack_btn:
+                    ):
                         open_pack(pack)
                 with cols[1]:
                     with st.popover("⋯"):
-                        # Umbenennen
                         new_pack_name = st.text_input("Paketname ändern", value=name, key=f"rename_{pack_id}")
                         if st.button("💾 Speichern", key=f"save_rename_{pack_id}"):
                             if new_pack_name.strip() and new_pack_name != name:
@@ -671,7 +678,7 @@ elif active_page == "packs":
 
     else:
         # =================================================================
-        # AKTIVE LERNSESSION (unveränderte SRS-Logik)
+        # AKTIVE LERNSESSION
         # =================================================================
         cards = st.session_state.cards
         topic = st.session_state.main_topic
@@ -682,15 +689,14 @@ elif active_page == "packs":
         streak = st.session_state.get("streak", {i: 0 for i in range(len(cards))})
         mastered = st.session_state.get("mastered", 0)
         xp = st.session_state.get("xp", 0)
-        last_xp_gain = st.session_state.get("last_xp_gain", 0)
         total_new = sum(1 for i in range(len(cards)) if streak.get(i, 0) < 7)
         capped_pos = min(new_card_pos, total_new)
 
-
         st.subheader(topic)
         st.progress(min(capped_pos / total_new if total_new else 1.0, 1.0),
-                text=f"Karte {capped_pos} von {total_new}")
-        st.markdown(f"<div style='text-align:right;font-size:1em;margin-bottom:0.5em;'>🏅 <b>{xp:,} XP</b></div>", unsafe_allow_html=True)
+                    text=f"Karte {capped_pos} von {total_new}")
+        st.markdown(f"<div style='text-align:right;font-size:1em;margin-bottom:0.5em;'>🏅 <b>{xp:,} XP</b></div>",
+                    unsafe_allow_html=True)
 
         mastered_pct = int((mastered / len(cards)) * 100) if cards else 0
         st.markdown(f"""
@@ -715,6 +721,7 @@ elif active_page == "packs":
             card_idx = entry["idx"]
             is_review = entry["is_review"]
             cur_streak = streak.get(card_idx, 0)
+            pid = st.session_state.active_pack_id
 
             with st.container(border=True):
                 top_left, top_right = st.columns([3, 1])
@@ -743,93 +750,35 @@ elif active_page == "packs":
 
                 elif mode == "question":
                     correct_answer = card["optionen"][card["richtig"]]
-                    pid = st.session_state.active_pack_id
 
                     if cur_streak < 4:
+                        # Multiple Choice
                         st.markdown(f"### {card['frage']}")
                         st.write("")
                         for i, option in enumerate(card["optionen"]):
                             if st.button(option, key=f"opt_{pos}_{i}", use_container_width=True):
-                                if i == card["richtig"]:
-                                    ns = cur_streak + 1
-                                    streak[card_idx] = ns
-                                    st.session_state.streak = streak
-                                    xp_gain = 0
-                                    if cur_streak == 0:
-                                        xp_gain += 30  # Neue Karte richtig
-                                    if ns >= 7 and cur_streak < 7:
-                                        st.session_state.mastered = mastered + 1
-                                        xp_gain += 100  # Karte gemeistert
-                                    st.session_state.xp = xp + xp_gain
-                                    db_set_xp(st.session_state.xp, _user_id)
-                                    st.session_state.last_xp_gain = xp_gain
-                                    db_save_progress(pid, card_idx, ns)
-                                    st.session_state.card_mode = "correct"
-                                else:
-                                    streak[card_idx] = 0
-                                    st.session_state.streak = streak
-                                    st.session_state.last_xp_gain = 0
-                                    db_save_progress(pid, card_idx, 0)
-                                    st.session_state.card_mode = "wrong"
-                                st.rerun()
+                                handle_answer(i == card["richtig"], card_idx, streak, mastered, xp, cur_streak, pid)
 
                     elif cur_streak < 6:
+                        # Lückentext
                         st.markdown("### Füll die Lücke aus:")
                         st.markdown(make_lueckentext(card["merke_dir"], correct_answer))
                         with st.form(key=f"fill_form_{pos}"):
                             user_answer = st.text_input("Deine Antwort:", placeholder="Hier eingeben…")
                             submitted = st.form_submit_button("✔️ Prüfen", use_container_width=True)
                         if submitted:
-                            if check_answer(user_answer, correct_answer):
-                                ns = cur_streak + 1
-                                streak[card_idx] = ns
-                                st.session_state.streak = streak
-                                xp_gain = 0
-                                if cur_streak == 0:
-                                    xp_gain += 30
-                                if ns >= 7 and cur_streak < 7:
-                                    st.session_state.mastered = mastered + 1
-                                    xp_gain += 100
-                                st.session_state.xp = xp + xp_gain
-                                db_set_xp(st.session_state.xp, _user_id)
-                                st.session_state.last_xp_gain = xp_gain
-                                db_save_progress(pid, card_idx, ns)
-                                st.session_state.card_mode = "correct"
-                            else:
-                                streak[card_idx] = 0
-                                st.session_state.streak = streak
-                                st.session_state.last_xp_gain = 0
-                                db_save_progress(pid, card_idx, 0)
-                                st.session_state.card_mode = "wrong"
-                            st.rerun()
+                            handle_answer(check_answer(user_answer, correct_answer),
+                                          card_idx, streak, mastered, xp, cur_streak, pid)
+
                     else:
+                        # Free Recall
                         st.markdown(f"### {card['frage']}")
                         with st.form(key=f"recall_form_{pos}"):
                             user_answer = st.text_input("Deine Antwort:", placeholder="Hier eingeben…")
                             submitted = st.form_submit_button("✔️ Prüfen", use_container_width=True)
                         if submitted:
-                            if check_answer(user_answer, correct_answer):
-                                ns = cur_streak + 1
-                                streak[card_idx] = ns
-                                st.session_state.streak = streak
-                                xp_gain = 0
-                                if cur_streak == 0:
-                                    xp_gain += 30
-                                if ns >= 7 and cur_streak < 7:
-                                    st.session_state.mastered = mastered + 1
-                                    xp_gain += 100
-                                st.session_state.xp = xp + xp_gain
-                                db_set_xp(st.session_state.xp, _user_id)
-                                st.session_state.last_xp_gain = xp_gain
-                                db_save_progress(pid, card_idx, ns)
-                                st.session_state.card_mode = "correct"
-                            else:
-                                streak[card_idx] = 0
-                                st.session_state.streak = streak
-                                st.session_state.last_xp_gain = 0
-                                db_save_progress(pid, card_idx, 0)
-                                st.session_state.card_mode = "wrong"
-                            st.rerun()
+                            handle_answer(check_answer(user_answer, correct_answer),
+                                          card_idx, streak, mastered, xp, cur_streak, pid)
 
                 elif mode == "correct":
                     xp_gain = st.session_state.get("last_xp_gain", 0)
@@ -880,28 +829,24 @@ elif active_page == "ranking":
         for i, (threshold, name, emoji) in enumerate(RANKS):
             if xp >= threshold:
                 if i == 0:
-                    return "gm"  # bereits Großmeister
-                return RANKS[i - 1]  # (threshold, name, emoji) des nächsten Rangs
+                    return "gm"
+                return RANKS[i - 1]
         return RANKS[-2]
 
     session_xp = st.session_state.get("xp", 0)
     user_name = st.session_state.get("sett_name") or db_get_username(_user_id) or "Du"
     st.session_state["sett_name"] = user_name
 
-    # Alle Nutzer aus der DB laden (alle Geräte)
     _all_raw = db_get_all_users()
-    # Falls der eigene Eintrag veraltet ist, aktuell halten
     for _u in _all_raw:
         if _u["user_id"] == _user_id:
             _u["xp"] = session_xp
             _u["username"] = user_name
-    # Neu sortieren nach XP
     all_users = sorted(_all_raw, key=lambda u: u["xp"], reverse=True)
 
     user_pos = next((i + 1 for i, u in enumerate(all_users) if u["user_id"] == _user_id), None)
     is_number_one = user_pos == 1
 
-    # --- Header: Titel links, Rang-Ziel rechts ---
     rank_name, rank_emoji = get_rank(session_xp)
     next_info = get_next_rank_info(session_xp)
     h1, h2 = st.columns([3, 2])
@@ -914,14 +859,12 @@ elif active_page == "ranking":
                 "background:linear-gradient(135deg,rgba(255,210,0,0.18),rgba(255,150,0,0.08));"
                 "text-align:center;font-weight:700;font-size:0.95em;margin-top:0.35em;"
                 "box-shadow:0 0 12px rgba(255,210,0,0.25);'>🌟 #1 Global</div>",
-                unsafe_allow_html=True
-            )
+                unsafe_allow_html=True)
         elif next_info == "gm":
             st.markdown(
                 f"<div style='text-align:right;font-size:0.9em;margin-top:0.5em;color:#aaa;'>"
                 f"Ziel: {rank_emoji} {rank_name} → <b style='color:#ffd200;'>👑 #1 GM</b></div>",
-                unsafe_allow_html=True
-            )
+                unsafe_allow_html=True)
         else:
             next_t, next_n, next_e = next_info
             xp_needed = next_t - session_xp
@@ -929,10 +872,8 @@ elif active_page == "ranking":
                 f"<div style='text-align:right;font-size:0.9em;margin-top:0.5em;color:#aaa;'>"
                 f"Ziel: {rank_emoji} {rank_name} → <b style='color:#fff;'>{next_e} {next_n}</b>"
                 f"<br><span style='font-size:0.85em;color:#888;'>noch {xp_needed:,} XP</span></div>",
-                unsafe_allow_html=True
-            )
+                unsafe_allow_html=True)
 
-    # --- Leaderboard ---
     MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
     others = [(pos + 1, u["username"], u["xp"]) for pos, u in enumerate(all_users) if u["user_id"] != _user_id]
     display_others = others[:5]
@@ -949,19 +890,21 @@ elif active_page == "ranking":
                     st.markdown(f"**#{real_pos}**")
             with c2:
                 if real_pos == 1:
-                    st.markdown(f"<span style='color:#ffd200;font-weight:700;font-size:1.1em;'>🏆 {uname}</span>", unsafe_allow_html=True)
+                    st.markdown(f"<span style='color:#ffd200;font-weight:700;font-size:1.1em;'>🏆 {uname}</span>",
+                                unsafe_allow_html=True)
                 else:
                     st.markdown(uname)
             with c3:
                 if rank_n == "Großmeister":
-                    st.markdown(f"<span class='rank-gm'>{rank_e} {rank_n}</span> <span style='color:#ffd200;font-weight:700;'>{xp:,} XP</span>", unsafe_allow_html=True)
+                    st.markdown(f"<span class='rank-gm'>{rank_e} {rank_n}</span> "
+                                f"<span style='color:#ffd200;font-weight:700;'>{xp:,} XP</span>",
+                                unsafe_allow_html=True)
                 else:
                     st.markdown(f"{rank_e} {rank_n} · **{xp:,} XP**")
 
     if show_sep:
         st.markdown('<div style="text-align:center;font-size:1.5em;color:#888;">…</div>', unsafe_allow_html=True)
 
-    # Eigener Platz immer am Ende (auch wenn außerhalb der Top 5)
     if user_pos is not None:
         rank_n, rank_e = get_rank(session_xp)
         with st.container(border=True):
@@ -973,9 +916,11 @@ elif active_page == "ranking":
                     st.markdown(f"**#{user_pos}**")
             with c2:
                 if is_number_one:
-                    st.markdown(f"<span style='color:#ffd200;font-weight:700;'>🌟 {user_name} (du)</span>", unsafe_allow_html=True)
+                    st.markdown(f"<span style='color:#ffd200;font-weight:700;'>🌟 {user_name} (du)</span>",
+                                unsafe_allow_html=True)
                 else:
-                    st.markdown(f"<span style='color:#ffd200;font-weight:600;'>⭐ {user_name} (du)</span>", unsafe_allow_html=True)
+                    st.markdown(f"<span style='color:#ffd200;font-weight:600;'>⭐ {user_name} (du)</span>",
+                                unsafe_allow_html=True)
             with c3:
                 st.markdown(f"{rank_e} {rank_n} · **{session_xp:,} XP**")
 
@@ -985,13 +930,11 @@ elif active_page == "ranking":
 elif active_page == "settings":
     st.markdown('<div class="headline">Einstellungen</div>', unsafe_allow_html=True)
 
-    # --- Geräte-ID ---
     with st.container(border=True):
         st.markdown("##### 📱 Geräte-ID")
         st.code(_user_id, language=None)
         st.caption("Diese ID identifiziert dein Gerät eindeutig. Teile sie nicht mit anderen.")
 
-    # --- Profil ---
     st.markdown("##### 👤 Profil")
     with st.container(border=True):
         col1, col2 = st.columns(2)
@@ -1002,12 +945,11 @@ elif active_page == "settings":
         if st.button("💾 Name speichern", key="save_name_btn"):
             name_to_save = new_name.strip() or "Du"
             st.session_state["sett_name"] = name_to_save
-            st.session_state["loaded_user_id"] = None  # force reload on next visit
+            st.session_state["loaded_user_id"] = None
             db_set_username(name_to_save, _user_id)
             st.success(f"Name gespeichert: {name_to_save}")
             st.rerun()
 
-    # --- Lerneinstellungen ---
     st.markdown("##### 📚 Lerneinstellungen")
     with st.container(border=True):
         st.selectbox("Sprache der Karteikarten", ["Deutsch", "English", "Español"], index=0, key="sett_lang")
@@ -1016,13 +958,11 @@ elif active_page == "settings":
         st.selectbox("Erinnerungszeit", ["08:00", "10:00", "12:00", "14:00", "18:00", "20:00"],
                      index=4, key="sett_reminder_time")
 
-    # --- Darstellung ---
     st.markdown("##### 🎨 Darstellung")
     with st.container(border=True):
         st.toggle("Dark Mode", value=True, key="sett_dark", disabled=True)
         st.selectbox("Schriftgröße", ["Klein", "Normal", "Groß"], index=1, key="sett_font")
 
-    # --- Premium ---
     st.markdown("##### ⭐ Premium")
     st.markdown("""
     <div class="premium-box">
@@ -1046,7 +986,6 @@ elif active_page == "settings":
     """, unsafe_allow_html=True)
     st.button("💎 Premium freischalten", use_container_width=True, type="primary", key="btn_premium")
 
-    # --- Über ---
     st.markdown("##### ℹ️ Über StudyFyn")
     with st.container(border=True):
         st.markdown("**StudyFyn** · Version 1.0 MVP")
