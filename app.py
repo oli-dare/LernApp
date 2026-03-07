@@ -9,12 +9,13 @@ def db_init_user_profiles():
     conn.commit()
     conn.close()
 
+
+# Nur noch auf explizite Aktion Account anlegen
 def db_ensure_user(user_id):
     conn = get_db()
-    if not conn.execute('SELECT 1 FROM user_profiles WHERE user_id=?', (user_id,)).fetchone():
-        conn.execute('INSERT INTO user_profiles (user_id, xp, username) VALUES (?, 0, "Du")', (user_id,))
-        conn.commit()
+    exists = conn.execute('SELECT 1 FROM user_profiles WHERE user_id=?', (user_id,)).fetchone()
     conn.close()
+    return bool(exists)
 
 def db_get_xp(user_id):
     conn = get_db()
@@ -24,7 +25,11 @@ def db_get_xp(user_id):
 
 def db_set_xp(xp, user_id):
     conn = get_db()
-    conn.execute('UPDATE user_profiles SET xp=? WHERE user_id=?', (xp, user_id))
+    # Account anlegen, falls noch nicht vorhanden
+    conn.execute('''
+        INSERT INTO user_profiles (user_id, xp, username) VALUES (?, ?, "Du")
+        ON CONFLICT(user_id) DO UPDATE SET xp=excluded.xp
+    ''', (user_id, xp))
     conn.commit()
     conn.close()
 
@@ -36,6 +41,7 @@ def db_get_username(user_id):
 
 def db_set_username(username, user_id):
     conn = get_db()
+    # Account anlegen, falls noch nicht vorhanden
     conn.execute('''
         INSERT INTO user_profiles (user_id, xp, username) VALUES (?, 0, ?)
         ON CONFLICT(user_id) DO UPDATE SET username=excluded.username
@@ -168,6 +174,7 @@ elif "user_id" not in st.session_state:
         _fallback_id = str(uuid.uuid4())
         st.session_state["user_id"] = _fallback_id
         st.query_params["uid"] = _fallback_id
+
 
 _user_id = st.session_state["user_id"]
 db_ensure_user(_user_id)
