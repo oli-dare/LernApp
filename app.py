@@ -248,17 +248,27 @@ def nav_color(page):
 
 st.markdown(f"""
 <style>
+/* Streamlit-Footer und Toolbar verstecken, damit Nav-Bar klickbar ist */
+footer {{ display: none !important; }}
+.stAppDeployButton {{ display: none !important; }}
+#MainMenu {{ display: none !important; }}
+
+/* Bottom-Padding damit Inhalt nicht hinter der Nav verschwindet */
+.stMainBlockContainer, .block-container {{ padding-bottom: 5em !important; }}
+
 .bottom-nav {{
     position: fixed; left: 0; bottom: 0px; width: 100vw;
     display: flex; justify-content: space-around; align-items: center;
     padding: 0.6em 0 0.4em 0;
-    background: rgba(30,30,30,0.92); z-index: 9999;
+    background: rgba(30,30,30,0.97); z-index: 999999;
     border-top: 2px solid rgba(220,220,220,0.2);
+    pointer-events: auto;
 }}
 .nav-item {{
     display: flex; flex-direction: column; align-items: center;
     text-decoration: none !important; font-size: 1.7em; line-height: 1;
     padding: 0.2em 0.6em; border-radius: 1.5em; transition: background 0.2s;
+    cursor: pointer;
 }}
 .nav-item:hover {{ text-decoration: none !important; }}
 .nav-item.active {{
@@ -288,12 +298,18 @@ st.markdown(f"""
     background: linear-gradient(135deg, rgba(255,210,0,0.18), rgba(255,150,30,0.08));
     box-shadow: 0 0 10px rgba(255,210,0,0.13); font-weight: 700;
 }}
+.folder-row {{ display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 0.5em; margin-bottom: 0.5em; }}
+.folder-btn {{ flex: 1; margin: 0; padding: 0; }}
+.folder-actions {{ margin-left: 0.5em; }}
+.pack-row {{ display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 0.5em; margin-bottom: 0.5em; }}
+.pack-btn {{ flex: 1; margin: 0; padding: 0; }}
+.pack-actions {{ margin-left: 0.5em; }}
 </style>
 <div class="bottom-nav">
-    <a class="{nav_class('home')}"     href="#" onclick="window.location.href=window.location.origin + window.location.pathname + '?page=home';"     style="color:{nav_color('home')};">&#127968;</a>
-    <a class="{nav_class('packs')}"    href="#" onclick="window.location.href=window.location.origin + window.location.pathname + '?page=packs';"    style="color:{nav_color('packs')};">&#128218;</a>
-    <a class="{nav_class('ranking')}"  href="#" onclick="window.location.href=window.location.origin + window.location.pathname + '?page=ranking';"  style="color:{nav_color('ranking')};">&#127942;</a>
-    <a class="{nav_class('settings')}" href="#" onclick="window.location.href=window.location.origin + window.location.pathname + '?page=settings';" style="color:{nav_color('settings')};">&#9881;&#65039;</a>
+    <a class="{nav_class('home')}"     href="?page=home"     style="color:{nav_color('home')};">&#127968;</a>
+    <a class="{nav_class('packs')}"    href="?page=packs"    style="color:{nav_color('packs')};">&#128218;</a>
+    <a class="{nav_class('ranking')}"  href="?page=ranking"  style="color:{nav_color('ranking')};">&#127942;</a>
+    <a class="{nav_class('settings')}" href="?page=settings" style="color:{nav_color('settings')};">&#9881;&#65039;</a>
 </div>
 """, unsafe_allow_html=True)
 
@@ -549,13 +565,6 @@ elif active_page == "packs":
                 fid = folder["id"]
                 fname = folder["name"]
                 fcount = db_count_packs_in_folder(fid, _user_id)
-                st.markdown("""
-                <style>
-                .folder-row { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 0.5em; margin-bottom: 0.5em; }
-                .folder-btn { flex: 1; margin: 0; padding: 0; }
-                .folder-actions { margin-left: 0.5em; }
-                </style>
-                """, unsafe_allow_html=True)
                 folder_row = st.container(border=True)
                 with folder_row:
                     cols = st.columns([10,1])
@@ -587,13 +596,6 @@ elif active_page == "packs":
             mastered_count = sum(1 for s in progress.values() if s >= 7)
             mastered_pct = int((mastered_count / total) * 100) if total else 0
 
-            st.markdown("""
-            <style>
-            .pack-row { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 0.5em; margin-bottom: 0.5em; }
-            .pack-btn { flex: 1; margin: 0; padding: 0; }
-            .pack-actions { margin-left: 0.5em; }
-            </style>
-            """, unsafe_allow_html=True)
             pack_row = st.container(border=True)
             with pack_row:
                 cols = st.columns([10,1])
