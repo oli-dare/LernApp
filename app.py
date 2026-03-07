@@ -56,6 +56,7 @@ def db_get_all_users():
 # =============================================================================
 
 import streamlit as st
+import streamlit.components.v1 as st_components
 import pytesseract
 from PIL import Image, ImageOps
 import google.generativeai as genai
@@ -67,7 +68,6 @@ import os
 import datetime
 import uuid
 from pathlib import Path
-import extra_streamlit_components as stx
 
 # --- Konfiguration ---
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -132,35 +132,42 @@ def init_db():
 init_db()
 db_init_user_profiles()
 
-# --- Geräte-ID: automatisch pro Browser gesetzt, kein Login nötig ---
-_cm = stx.CookieManager(key="studyfyn_cm")
-_cookie_user_id = _cm.get("studyfyn_uid")
+# --- Geräte-ID: dauerhaft per localStorage im Browser ---
+# JS liest localStorage, schreibt die ID in den URL-Parameter 'uid'.
+# Streamlit liest sie dann zuverlässig aus st.query_params.
+st_components.html("""
+<script>
+(function() {
+    var uid = localStorage.getItem('studyfyn_uid');
+    if (!uid) {
+        uid = ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, function(c) {
+            return (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16);
+        });
+        localStorage.setItem('studyfyn_uid', uid);
+    }
+    // URL-Parameter setzen ohne Seite neu zu laden
+    var url = new URL(window.parent.location.href);
+    if (url.searchParams.get('uid') !== uid) {
+        url.searchParams.set('uid', uid);
+        window.parent.history.replaceState({}, '', url.toString());
+    }
+})();
+</script>
+""", height=0)
 
-if _cookie_user_id:
-    # Cookie erfolgreich geladen
-    st.session_state["user_id"] = _cookie_user_id
-    st.session_state.pop("_cookie_wait", None)
-elif "user_id" in st.session_state:
-    # Schon in dieser Session bekannt – Cookie noch nicht geladen, aber ID vorhanden
-    pass
-elif not st.session_state.get("_cookie_wait"):
-    # Erste Render: Cookie-JS noch nicht bereit – eine Runde warten
-    st.session_state["_cookie_wait"] = True
-    st.rerun()
-else:
-    # Cookie wirklich nicht vorhanden – neue ID erstellen
-    _new_user_id = str(uuid.uuid4())
-    _cm.set(
-        "studyfyn_uid",
-        _new_user_id,
-        key=f"set_uid_cookie_{_new_user_id}",
-        expires_at=datetime.datetime.now() + datetime.timedelta(days=3650),
-        max_age=315360000,
-        same_site="lax",
-    )
-    st.session_state["user_id"] = _new_user_id
-    st.session_state.pop("_cookie_wait", None)
-    st.rerun()
+_uid_from_url = st.query_params.get("uid", None)
+if _uid_from_url:
+    st.session_state["user_id"] = _uid_from_url
+elif "user_id" not in st.session_state:
+    # Fallback: noch kein JS-Round-Trip, eine Runde warten
+    if not st.session_state.get("_uid_wait"):
+        st.session_state["_uid_wait"] = True
+        st.rerun()
+    else:
+        # JS hat keine ID geliefert – neue erstellen (sehr selten)
+        _fallback_id = str(uuid.uuid4())
+        st.session_state["user_id"] = _fallback_id
+        st.query_params["uid"] = _fallback_id
 
 _user_id = st.session_state["user_id"]
 db_ensure_user(_user_id)
@@ -323,10 +330,10 @@ footer {{ display: none !important; }}
 .pack-actions {{ margin-left: 0.5em; }}
 </style>
 <div class="bottom-nav">
-    <a class="{nav_class('home')}"     href="?page=home"     style="color:{nav_color('home')};">&#127968;</a>
-    <a class="{nav_class('packs')}"    href="?page=packs"    style="color:{nav_color('packs')};">&#128218;</a>
-    <a class="{nav_class('ranking')}"  href="?page=ranking"  style="color:{nav_color('ranking')};">&#127942;</a>
-    <a class="{nav_class('settings')}" href="?page=settings" style="color:{nav_color('settings')};">&#9881;&#65039;</a>
+    <a class="{nav_class('home')}"     href="?page=home&uid={_user_id}"     style="color:{nav_color('home')};">&#127968;</a>
+    <a class="{nav_class('packs')}"    href="?page=packs&uid={_user_id}"    style="color:{nav_color('packs')};">&#128218;</a>
+    <a class="{nav_class('ranking')}"  href="?page=ranking&uid={_user_id}"  style="color:{nav_color('ranking')};">&#127942;</a>
+    <a class="{nav_class('settings')}" href="?page=settings&uid={_user_id}" style="color:{nav_color('settings')};">&#9881;&#65039;</a>
 </div>
 """, unsafe_allow_html=True)
 
