@@ -377,11 +377,16 @@ def text_to_bullets_with_emojis(text):
         f"Text:\n{text}"
     )
     try:
+        # Nutze Gemini Pro für bessere Themen-Extraktion
         model = genai.GenerativeModel("gemini-3.1-flash-lite-preview")
         response = model.generate_content(prompt)
-        return [line.strip() for line in response.text.split("\n") if line.strip()]
+        lines = [line.strip() for line in response.text.split("\n") if line.strip()]
+        # Fallback, falls keine sinnvolle Liste geliefert wird
+        if not lines or len(lines) < 2:
+            return ["Thema", "❓ Keine Themen extrahiert. Bitte Text prüfen."]
+        return lines
     except Exception as e:
-        return [f"Fehler bei der KI-Verarbeitung: {e}"]
+        return ["Thema", f"Fehler bei der KI-Verarbeitung: {e}"]
 
 def generate_srs_cards(topic, num_cards):
     prompt = (
