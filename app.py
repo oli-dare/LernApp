@@ -75,8 +75,11 @@ import datetime
 import uuid
 from pathlib import Path
 
+
 # --- Konfiguration ---
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+_tess_path = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+if os.path.exists(_tess_path):
+    pytesseract.pytesseract.tesseract_cmd = _tess_path
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 
