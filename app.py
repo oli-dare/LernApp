@@ -61,10 +61,11 @@ def db_get_all_users():
 # StudyFyn - KI-Lernhelfer
 # =============================================================================
 
+
 import streamlit as st
 import streamlit.components.v1 as st_components
-import pytesseract
 from PIL import Image, ImageOps
+import requests
 import google.generativeai as genai
 import random
 import json
@@ -76,10 +77,11 @@ import uuid
 from pathlib import Path
 
 
+
+
 # --- Konfiguration ---
-_tess_path = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-if os.path.exists(_tess_path):
-    pytesseract.pytesseract.tesseract_cmd = _tess_path
+OCR_SPACE_API_KEY = "K89952047888957"
+OCR_SPACE_API_URL = "https://api.ocr.space/parse/image"
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 
@@ -464,6 +466,7 @@ if active_page == "home":
         "Lade ein Foto deiner Buchseite/Notiz hoch", type=["png", "jpg", "jpeg"]
     )
 
+
     if uploaded_file is not None:
         if ("last_uploaded_file" not in st.session_state or
                 st.session_state.last_uploaded_file != uploaded_file):
@@ -473,12 +476,35 @@ if active_page == "home":
                 image = image.rotate(90, expand=True)
             st.session_state.last_uploaded_file = uploaded_file
             st.session_state.last_image = image
+            # OCR.Space API-Aufruf
             try:
-                text = pytesseract.image_to_string(image, lang="deu")
+                img_bytes = None
+                with st.spinner("Text wird aus dem Bild gelesen..."):
+                    import io
+                    img_bytes = io.BytesIO()
+                    image.save(img_bytes, format="PNG")
+                    img_bytes.seek(0)
+                    response = requests.post(
+                        OCR_SPACE_API_URL,
+                        files={"file": ("image.png", img_bytes, "image/png")},
+                        data={
+                            "apikey": OCR_SPACE_API_KEY,
+                            "language": "ger",
+                            "isOverlayRequired": False
+                        },
+                        timeout=30
+                    )
+                    result = response.json()
+                    if result.get("IsErroredOnProcessing"):
+                        raise Exception(result.get("ErrorMessage", "Fehler bei OCR.Space"))
+                    parsed_results = result.get("ParsedResults")
+                    if parsed_results and len(parsed_results) > 0:
+                        text = parsed_results[0].get("ParsedText", "")
+                    else:
+                        text = "Kein Text erkannt."
+                st.session_state.last_text = text
             except Exception as e:
                 st.session_state.last_text = "Fehler: " + str(e)
-            else:
-                st.session_state.last_text = text
 
         image = st.session_state.get("last_image")
         text = st.session_state.get("last_text", "")

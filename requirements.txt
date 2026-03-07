@@ -1,5 +1,4 @@
 streamlit
-pytesseract
 Pillow
 google-generativeai
-extra-streamlit-components
+requests
