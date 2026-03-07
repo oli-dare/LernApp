@@ -51,6 +51,7 @@ import random
 import json
 import re
 import sqlite3
+import datetime
 import uuid
 from pathlib import Path
 import extra_streamlit_components as stx
@@ -118,23 +119,31 @@ db_init_user_profiles()
 
 # --- Geräte-ID: automatisch pro Browser gesetzt, kein Login nötig ---
 _cm = stx.CookieManager(key="studyfyn_cm")
-# auf jedem Seitenaufruf versuchen wir, die ID aus dem Cookie zu lesen
-_uid = _cm.get("studyfyn_uid") or ""
-if not _uid:
-    _uid = str(uuid.uuid4())
-    # setzen ohne Schlüsselname ist ausreichend
-    _cm.set("studyfyn_uid", _uid)
-# speichern auch in der Session für einfachen Zugriff
-st.session_state["user_id"] = _uid
-_user_id = _uid
-# sicherstellen, dass ein Profil existiert
+_cookie_user_id = _cm.get("studyfyn_uid")
+
+if _cookie_user_id:
+    st.session_state["user_id"] = _cookie_user_id
+elif "user_id" not in st.session_state:
+    _new_user_id = str(uuid.uuid4())
+    _cm.set(
+        "studyfyn_uid",
+        _new_user_id,
+        key=f"set_uid_cookie_{_new_user_id}",
+        expires_at=datetime.datetime.now() + datetime.timedelta(days=3650),
+        max_age=315360000,
+        same_site="lax",
+    )
+    st.session_state["user_id"] = _new_user_id
+    st.rerun()
+
+_user_id = st.session_state["user_id"]
 db_ensure_user(_user_id)
 
-# XP und Name beim Start aus DB laden
-if "xp" not in st.session_state:
+# XP und Name immer passend zum aktuellen Geräte-Nutzer laden
+if st.session_state.get("loaded_user_id") != _user_id:
     st.session_state["xp"] = db_get_xp(_user_id)
-# Name immer direkt aus DB holen, damit Änderungen sofort sichtbar
-st.session_state["sett_name"] = db_get_username(_user_id)
+    st.session_state["sett_name"] = db_get_username(_user_id)
+    st.session_state["loaded_user_id"] = _user_id
 
 # --- Packs ---
 def db_save_pack(name, cards_json, folder_id=None, user_id='legacy'):
