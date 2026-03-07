@@ -36,7 +36,10 @@ def db_get_username(user_id):
 
 def db_set_username(username, user_id):
     conn = get_db()
-    conn.execute('UPDATE user_profiles SET username=? WHERE user_id=?', (username, user_id))
+    conn.execute('''
+        INSERT INTO user_profiles (user_id, xp, username) VALUES (?, 0, ?)
+        ON CONFLICT(user_id) DO UPDATE SET username=excluded.username
+    ''', (user_id, username))
     conn.commit()
     conn.close()
 
@@ -857,8 +860,7 @@ elif active_page == "ranking":
         return RANKS[-2]
 
     session_xp = st.session_state.get("xp", 0)
-    user_name = db_get_username(_user_id) or "Du"
-    # Sync session state damit der Name überall aktuell ist
+    user_name = st.session_state.get("sett_name") or db_get_username(_user_id) or "Du"
     st.session_state["sett_name"] = user_name
 
     # Alle Nutzer aus der DB laden (alle Geräte)
@@ -975,8 +977,10 @@ elif active_page == "settings":
         if st.button("💾 Name speichern", key="save_name_btn"):
             name_to_save = new_name.strip() or "Du"
             st.session_state["sett_name"] = name_to_save
+            st.session_state["loaded_user_id"] = None  # force reload on next visit
             db_set_username(name_to_save, _user_id)
             st.success(f"Name gespeichert: {name_to_save}")
+            st.rerun()
 
     # --- Lerneinstellungen ---
     st.markdown("##### 📚 Lerneinstellungen")
