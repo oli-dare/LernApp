@@ -55,7 +55,7 @@ from pathlib import Path
 
 # --- Konfiguration ---
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-GEMINI_API_KEY = st.secrets.get("IzaSyCR3k6tmE_cYB6NUE27czEZ8Ucv5WySVxo")
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 
 # =============================================================================
@@ -201,7 +201,7 @@ def nav_color(page):
 st.markdown(f"""
 <style>
 .bottom-nav {{
-    position: fixed; left: 0; bottom: 0; width: 100vw;
+    position: fixed; left: 0; bottom: 60px; width: 100vw;
     display: flex; justify-content: space-around; align-items: center;
     padding: 0.6em 0 0.4em 0;
     background: rgba(30,30,30,0.92); z-index: 9999;
