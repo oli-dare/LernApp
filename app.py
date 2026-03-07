@@ -1,42 +1,42 @@
-﻿# XP persistent speichern/laden
-def db_init_xp():
+﻿# Nutzerprofil (XP + Name) – pro Gerät, automatisch via Browser-Cookie
+def db_init_user_profiles():
     conn = get_db()
-    conn.execute('''CREATE TABLE IF NOT EXISTS xp_state (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        xp INTEGER NOT NULL DEFAULT 0
+    conn.execute('''CREATE TABLE IF NOT EXISTS user_profiles (
+        user_id TEXT PRIMARY KEY,
+        xp INTEGER NOT NULL DEFAULT 0,
+        username TEXT NOT NULL DEFAULT "Du"
     )''')
-    # username Spalte nachträglich hinzufügen
-    try:
-        conn.execute('ALTER TABLE xp_state ADD COLUMN username TEXT NOT NULL DEFAULT "Du"')
-    except Exception:
-        pass
-    # Initialwert setzen, falls leer
-    if not conn.execute('SELECT * FROM xp_state WHERE id=1').fetchone():
-        conn.execute('INSERT INTO xp_state (id, xp, username) VALUES (1, 0, "Du")')
     conn.commit()
     conn.close()
 
-def db_get_xp():
+def db_ensure_user(user_id):
     conn = get_db()
-    row = conn.execute('SELECT xp FROM xp_state WHERE id=1').fetchone()
+    if not conn.execute('SELECT 1 FROM user_profiles WHERE user_id=?', (user_id,)).fetchone():
+        conn.execute('INSERT INTO user_profiles (user_id, xp, username) VALUES (?, 0, "Du")', (user_id,))
+        conn.commit()
+    conn.close()
+
+def db_get_xp(user_id):
+    conn = get_db()
+    row = conn.execute('SELECT xp FROM user_profiles WHERE user_id=?', (user_id,)).fetchone()
     conn.close()
     return row['xp'] if row else 0
 
-def db_set_xp(xp):
+def db_set_xp(xp, user_id):
     conn = get_db()
-    conn.execute('UPDATE xp_state SET xp=? WHERE id=1', (xp,))
+    conn.execute('UPDATE user_profiles SET xp=? WHERE user_id=?', (xp, user_id))
     conn.commit()
     conn.close()
 
-def db_get_username():
+def db_get_username(user_id):
     conn = get_db()
-    row = conn.execute('SELECT username FROM xp_state WHERE id=1').fetchone()
+    row = conn.execute('SELECT username FROM user_profiles WHERE user_id=?', (user_id,)).fetchone()
     conn.close()
     return row['username'] if row and row['username'] else 'Du'
 
-def db_set_username(username):
+def db_set_username(username, user_id):
     conn = get_db()
-    conn.execute('UPDATE xp_state SET username=? WHERE id=1', (username,))
+    conn.execute('UPDATE user_profiles SET username=? WHERE user_id=?', (username, user_id))
     conn.commit()
     conn.close()
 # =============================================================================
@@ -51,7 +51,9 @@ import random
 import json
 import re
 import sqlite3
+import uuid
 from pathlib import Path
+import extra_streamlit_components as stx
 
 # --- Konfiguration ---
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -73,11 +75,13 @@ def init_db():
     conn = get_db()
     conn.execute('''CREATE TABLE IF NOT EXISTS folders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL DEFAULT 'legacy',
         name TEXT NOT NULL,
         created TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
     conn.execute('''CREATE TABLE IF NOT EXISTS packs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL DEFAULT 'legacy',
         name TEXT NOT NULL,
         created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         cards TEXT NOT NULL,
@@ -91,9 +95,17 @@ def init_db():
         UNIQUE(pack_id, card_idx),
         FOREIGN KEY(pack_id) REFERENCES packs(id)
     )''')
-    # folder_id Spalte nachträglich hinzufügen (für bestehende DBs)
+    # Migrationen für bestehende DBs
     try:
         conn.execute('ALTER TABLE packs ADD COLUMN folder_id INTEGER REFERENCES folders(id)')
+    except Exception:
+        pass
+    try:
+        conn.execute('ALTER TABLE packs ADD COLUMN user_id TEXT NOT NULL DEFAULT "legacy"')
+    except Exception:
+        pass
+    try:
+        conn.execute('ALTER TABLE folders ADD COLUMN user_id TEXT NOT NULL DEFAULT "legacy"')
     except Exception:
         pass
     conn.commit()
@@ -101,31 +113,50 @@ def init_db():
 
 
 init_db()
-db_init_xp()
+db_init_user_profiles()
+
+# --- Geräte-ID: automatisch pro Browser gesetzt, kein Login nötig ---
+@st.cache_resource
+def _get_cookie_manager():
+    return stx.CookieManager(key="studyfyn_cm")
+
+_cm = _get_cookie_manager()
+if "user_id" not in st.session_state:
+    _all_cookies = _cm.get_all()
+    _uid = (_all_cookies.get("studyfyn_uid") if isinstance(_all_cookies, dict) else None) or ""
+    if not _uid:
+        _uid = str(uuid.uuid4())
+        _cm.set("studyfyn_uid", _uid, key="set_uid_cookie")
+    st.session_state["user_id"] = _uid
+_user_id = st.session_state["user_id"]
+db_ensure_user(_user_id)
 
 # XP und Name beim Start aus DB laden
 if "xp" not in st.session_state:
-    st.session_state["xp"] = db_get_xp()
+    st.session_state["xp"] = db_get_xp(_user_id)
 if "sett_name" not in st.session_state:
-    st.session_state["sett_name"] = db_get_username()
+    st.session_state["sett_name"] = db_get_username(_user_id)
 
 # --- Packs ---
-def db_save_pack(name, cards_json, folder_id=None):
+def db_save_pack(name, cards_json, folder_id=None, user_id='legacy'):
     conn = get_db()
-    cur = conn.execute('INSERT INTO packs (name, cards, folder_id) VALUES (?, ?, ?)',
-                       (name, cards_json, folder_id))
+    cur = conn.execute('INSERT INTO packs (name, cards, folder_id, user_id) VALUES (?, ?, ?, ?)',
+                       (name, cards_json, folder_id, user_id))
     pack_id = cur.lastrowid
     conn.commit()
     conn.close()
     return pack_id
 
-def db_load_packs(folder_id=None):
+def db_load_packs(folder_id=None, user_id='legacy'):
     conn = get_db()
     if folder_id is not None:
-        rows = conn.execute('SELECT * FROM packs WHERE folder_id = ? ORDER BY created DESC',
-                            (folder_id,)).fetchall()
+        rows = conn.execute(
+            'SELECT * FROM packs WHERE folder_id = ? AND user_id = ? ORDER BY created DESC',
+            (folder_id, user_id)).fetchall()
     else:
-        rows = conn.execute('SELECT * FROM packs WHERE folder_id IS NULL ORDER BY created DESC').fetchall()
+        rows = conn.execute(
+            'SELECT * FROM packs WHERE folder_id IS NULL AND user_id = ? ORDER BY created DESC',
+            (user_id,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -158,17 +189,17 @@ def db_move_pack(pack_id, folder_id):
     conn.close()
 
 # --- Ordner ---
-def db_create_folder(name):
+def db_create_folder(name, user_id='legacy'):
     conn = get_db()
-    cur = conn.execute('INSERT INTO folders (name) VALUES (?)', (name,))
+    cur = conn.execute('INSERT INTO folders (name, user_id) VALUES (?, ?)', (name, user_id))
     fid = cur.lastrowid
     conn.commit()
     conn.close()
     return fid
 
-def db_load_folders():
+def db_load_folders(user_id='legacy'):
     conn = get_db()
-    rows = conn.execute('SELECT * FROM folders ORDER BY created DESC').fetchall()
+    rows = conn.execute('SELECT * FROM folders WHERE user_id = ? ORDER BY created DESC', (user_id,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -179,10 +210,10 @@ def db_delete_folder(folder_id):
     conn.commit()
     conn.close()
 
-def db_count_packs_in_folder(folder_id):
+def db_count_packs_in_folder(folder_id, user_id='legacy'):
     conn = get_db()
-    c = conn.execute('SELECT COUNT(*) as c FROM packs WHERE folder_id = ?',
-                     (folder_id,)).fetchone()['c']
+    c = conn.execute('SELECT COUNT(*) as c FROM packs WHERE folder_id = ? AND user_id = ?',
+                     (folder_id, user_id)).fetchone()['c']
     conn.close()
     return c
 
@@ -201,7 +232,7 @@ def nav_color(page):
 st.markdown(f"""
 <style>
 .bottom-nav {{
-    position: fixed; left: 0; bottom: 60px; width: 100vw;
+    position: fixed; left: 0; bottom: 0px; width: 100vw;
     display: flex; justify-content: space-around; align-items: center;
     padding: 0.6em 0 0.4em 0;
     background: rgba(30,30,30,0.92); z-index: 9999;
@@ -432,7 +463,7 @@ if active_page == "home":
                 st.session_state.aufbereitet = False
                 st.session_state.mastered = 0
                 st.session_state.pack_started = False
-                pack_id = db_save_pack(main_topic, json.dumps(cards))
+                pack_id = db_save_pack(main_topic, json.dumps(cards), user_id=_user_id)
                 st.session_state.active_pack_id = pack_id
                 st.query_params["page"] = "packs"
                 st.rerun()
@@ -453,7 +484,7 @@ elif active_page == "packs":
 
         # ---- HEADER ----
         if current_folder:
-            folders = db_load_folders()
+            folders = db_load_folders(_user_id)
             folder_name = next((f["name"] for f in folders if f["id"] == current_folder), "Ordner")
             h1, h2 = st.columns([8, 1])
             with h1:
@@ -488,17 +519,17 @@ elif active_page == "packs":
                 fname = st.text_input("Ordnername:")
                 if st.form_submit_button("Erstellen"):
                     if fname.strip():
-                        db_create_folder(fname.strip())
+                        db_create_folder(fname.strip(), _user_id)
                     st.session_state.creating_folder = False
                     st.rerun()
 
         # ---- Ordner anzeigen (nur auf Root-Ebene) ----
         if not current_folder:
-            folders = db_load_folders()
+            folders = db_load_folders(_user_id)
             for folder in folders:
                 fid = folder["id"]
                 fname = folder["name"]
-                fcount = db_count_packs_in_folder(fid)
+                fcount = db_count_packs_in_folder(fid, _user_id)
                 st.markdown("""
                 <style>
                 .folder-row { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 0.5em; margin-bottom: 0.5em; }
@@ -520,10 +551,10 @@ elif active_page == "packs":
                                 st.rerun()
 
         # ---- Packs anzeigen ----
-        packs = db_load_packs(folder_id=current_folder)
-        all_folders = db_load_folders()
+        packs = db_load_packs(folder_id=current_folder, user_id=_user_id)
+        all_folders = db_load_folders(_user_id)
 
-        if not packs and not (not current_folder and db_load_folders()):
+        if not packs and not (not current_folder and db_load_folders(_user_id)):
             st.info("Noch keine Pakete vorhanden. Erstelle ein neues über ➕ oder auf der Startseite.")
 
 
@@ -570,7 +601,7 @@ elif active_page == "packs":
                                 st.rerun()
                         st.divider()
                         if st.button("📋 Duplizieren", key=f"dup_{pack_id}"):
-                            db_save_pack(name + " (Kopie)", pack["cards"], pack.get("folder_id"))
+                            db_save_pack(name + " (Kopie)", pack["cards"], pack.get("folder_id"), _user_id)
                             st.rerun()
                         if all_folders:
                             st.caption("📂 In Ordner verschieben:")
@@ -678,7 +709,7 @@ elif active_page == "packs":
                                         st.session_state.mastered = mastered + 1
                                         xp_gain += 100  # Karte gemeistert
                                     st.session_state.xp = xp + xp_gain
-                                    db_set_xp(st.session_state.xp)
+                                    db_set_xp(st.session_state.xp, _user_id)
                                     st.session_state.last_xp_gain = xp_gain
                                     db_save_progress(pid, card_idx, ns)
                                     st.session_state.card_mode = "correct"
@@ -708,7 +739,7 @@ elif active_page == "packs":
                                     st.session_state.mastered = mastered + 1
                                     xp_gain += 100
                                 st.session_state.xp = xp + xp_gain
-                                db_set_xp(st.session_state.xp)
+                                db_set_xp(st.session_state.xp, _user_id)
                                 st.session_state.last_xp_gain = xp_gain
                                 db_save_progress(pid, card_idx, ns)
                                 st.session_state.card_mode = "correct"
@@ -736,7 +767,7 @@ elif active_page == "packs":
                                     st.session_state.mastered = mastered + 1
                                     xp_gain += 100
                                 st.session_state.xp = xp + xp_gain
-                                db_set_xp(st.session_state.xp)
+                                db_set_xp(st.session_state.xp, _user_id)
                                 st.session_state.last_xp_gain = xp_gain
                                 db_save_progress(pid, card_idx, ns)
                                 st.session_state.card_mode = "correct"
@@ -908,7 +939,7 @@ elif active_page == "settings":
         if st.button("💾 Name speichern", key="save_name_btn"):
             name_to_save = new_name.strip() or "Du"
             st.session_state["sett_name"] = name_to_save
-            db_set_username(name_to_save)
+            db_set_username(name_to_save, _user_id)
             st.success(f"Name gespeichert: {name_to_save}")
 
     # --- Lerneinstellungen ---
