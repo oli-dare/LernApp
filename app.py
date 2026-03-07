@@ -60,6 +60,7 @@ import random
 import json
 import re
 import sqlite3
+import os
 import datetime
 import uuid
 from pathlib import Path
@@ -73,7 +74,9 @@ genai.configure(api_key=GEMINI_API_KEY)
 # =============================================================================
 # DATENBANK
 # =============================================================================
-DB_PATH = Path(__file__).parent / "studyfyn_data.db"
+DB_PATH = os.environ.get("STUDYFYN_DB_PATH")
+if not DB_PATH:
+    DB_PATH = str(Path(__file__).parent / "studyfyn_data.db")
 
 def get_db():
     conn = sqlite3.connect(str(DB_PATH), timeout=30)
