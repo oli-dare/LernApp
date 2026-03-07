@@ -137,8 +137,18 @@ _cm = stx.CookieManager(key="studyfyn_cm")
 _cookie_user_id = _cm.get("studyfyn_uid")
 
 if _cookie_user_id:
+    # Cookie erfolgreich geladen
     st.session_state["user_id"] = _cookie_user_id
-elif "user_id" not in st.session_state:
+    st.session_state.pop("_cookie_wait", None)
+elif "user_id" in st.session_state:
+    # Schon in dieser Session bekannt – Cookie noch nicht geladen, aber ID vorhanden
+    pass
+elif not st.session_state.get("_cookie_wait"):
+    # Erste Render: Cookie-JS noch nicht bereit – eine Runde warten
+    st.session_state["_cookie_wait"] = True
+    st.rerun()
+else:
+    # Cookie wirklich nicht vorhanden – neue ID erstellen
     _new_user_id = str(uuid.uuid4())
     _cm.set(
         "studyfyn_uid",
@@ -149,6 +159,7 @@ elif "user_id" not in st.session_state:
         same_site="lax",
     )
     st.session_state["user_id"] = _new_user_id
+    st.session_state.pop("_cookie_wait", None)
     st.rerun()
 
 _user_id = st.session_state["user_id"]
