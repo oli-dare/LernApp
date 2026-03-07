@@ -39,6 +39,15 @@ def db_set_username(username, user_id):
     conn.execute('UPDATE user_profiles SET username=? WHERE user_id=?', (username, user_id))
     conn.commit()
     conn.close()
+
+def db_get_all_users():
+    """Gibt alle User-Profile zurück, sortiert nach XP (absteigend)."""
+    conn = get_db()
+    rows = conn.execute(
+        'SELECT user_id, xp, username FROM user_profiles ORDER BY xp DESC'
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 # =============================================================================
 # StudyFyn - KI-Lernhelfer
 # =============================================================================
@@ -281,10 +290,10 @@ st.markdown(f"""
 }}
 </style>
 <div class="bottom-nav">
-    <a class="{nav_class('home')}"     href="?page=home"     style="color:{nav_color('home')};">&#127968;</a>
-    <a class="{nav_class('packs')}"    href="?page=packs"    style="color:{nav_color('packs')};">&#128218;</a>
-    <a class="{nav_class('ranking')}"  href="?page=ranking"  style="color:{nav_color('ranking')};">&#127942;</a>
-    <a class="{nav_class('settings')}" href="?page=settings" style="color:{nav_color('settings')};">&#9881;&#65039;</a>
+    <a class="{nav_class('home')}"     href="#" onclick="window.location.href=window.location.origin + window.location.pathname + '?page=home';"     style="color:{nav_color('home')};">&#127968;</a>
+    <a class="{nav_class('packs')}"    href="#" onclick="window.location.href=window.location.origin + window.location.pathname + '?page=packs';"    style="color:{nav_color('packs')};">&#128218;</a>
+    <a class="{nav_class('ranking')}"  href="#" onclick="window.location.href=window.location.origin + window.location.pathname + '?page=ranking';"  style="color:{nav_color('ranking')};">&#127942;</a>
+    <a class="{nav_class('settings')}" href="#" onclick="window.location.href=window.location.origin + window.location.pathname + '?page=settings';" style="color:{nav_color('settings')};">&#9881;&#65039;</a>
 </div>
 """, unsafe_allow_html=True)
 
@@ -847,13 +856,17 @@ elif active_page == "ranking":
     # Sync session state damit der Name überall aktuell ist
     st.session_state["sett_name"] = user_name
 
-    # Nur ein Demo-Eintrag bei Großmeister, alle anderen Plätze sind echt
-    all_users = sorted(
-        [("DemoData", 12500), (user_name, session_xp)],
-        key=lambda u: u[1], reverse=True
-    )
+    # Alle Nutzer aus der DB laden (alle Geräte)
+    _all_raw = db_get_all_users()
+    # Falls der eigene Eintrag veraltet ist, aktuell halten
+    for _u in _all_raw:
+        if _u["user_id"] == _user_id:
+            _u["xp"] = session_xp
+            _u["username"] = user_name
+    # Neu sortieren nach XP
+    all_users = sorted(_all_raw, key=lambda u: u["xp"], reverse=True)
 
-    user_pos = next((i + 1 for i, (n, _) in enumerate(all_users) if n == user_name), None)
+    user_pos = next((i + 1 for i, u in enumerate(all_users) if u["user_id"] == _user_id), None)
     is_number_one = user_pos == 1
 
     # --- Header: Titel links, Rang-Ziel rechts ---
@@ -889,7 +902,7 @@ elif active_page == "ranking":
 
     # --- Leaderboard ---
     MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
-    others = [(pos + 1, n, x) for pos, (n, x) in enumerate(all_users) if n != user_name]
+    others = [(pos + 1, u["username"], u["xp"]) for pos, u in enumerate(all_users) if u["user_id"] != _user_id]
     display_others = others[:5]
     show_sep = user_pos is not None and user_pos > len(display_others) + 1
 
@@ -916,7 +929,7 @@ elif active_page == "ranking":
     if show_sep:
         st.markdown('<div style="text-align:center;font-size:1.5em;color:#888;">…</div>', unsafe_allow_html=True)
 
-    # Eigener Platz immer am Ende
+    # Eigener Platz immer am Ende (auch wenn außerhalb der Top 5)
     if user_pos is not None:
         rank_n, rank_e = get_rank(session_xp)
         with st.container(border=True):
