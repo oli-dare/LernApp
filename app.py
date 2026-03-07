@@ -940,6 +940,12 @@ elif active_page == "ranking":
 elif active_page == "settings":
     st.markdown('<div class="headline">Einstellungen</div>', unsafe_allow_html=True)
 
+    # --- Geräte-ID ---
+    with st.container(border=True):
+        st.markdown("##### 📱 Geräte-ID")
+        st.code(_user_id, language=None)
+        st.caption("Diese ID identifiziert dein Gerät eindeutig. Teile sie nicht mit anderen.")
+
     # --- Profil ---
     st.markdown("##### 👤 Profil")
     with st.container(border=True):
