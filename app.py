@@ -478,15 +478,21 @@ if active_page == "home":
             st.session_state.last_image = image
             # OCR.Space API-Aufruf
             try:
-                img_bytes = None
+                import io
                 with st.spinner("Text wird aus dem Bild gelesen..."):
-                    import io
-                    img_bytes = io.BytesIO()
-                    image.save(img_bytes, format="PNG")
+                    # Bild als JPEG komprimieren, bis es unter 900 KB ist
+                    ocr_image = image.convert("RGB")
+                    quality = 85
+                    while True:
+                        img_bytes = io.BytesIO()
+                        ocr_image.save(img_bytes, format="JPEG", quality=quality)
+                        if img_bytes.tell() <= 900 * 1024 or quality <= 30:
+                            break
+                        quality -= 10
                     img_bytes.seek(0)
                     response = requests.post(
                         OCR_SPACE_API_URL,
-                        files={"file": ("image.png", img_bytes, "image/png")},
+                        files={"file": ("image.jpg", img_bytes, "image/jpeg")},
                         data={
                             "apikey": OCR_SPACE_API_KEY,
                             "language": "ger",
