@@ -1046,10 +1046,10 @@ elif active_page == "settings":
                 msg = MIMEText(f"Feedback von StudyFyn\n\nGeräte-ID: {_user_id}\n\n{feedback_text}")
                 msg["Subject"] = "StudyFyn Feedback"
                 msg["From"] = "studyfyn-feedback@no-reply.com"
-                msg["To"] = "eigenes.acc@gmail.com"
+                msg["To"] = "oli.dare.dev@gmail.com"
                 # Lokaler SMTP-Server oder Gmail SMTP (hier als Beispiel, ggf. anpassen)
                 with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-                    server.login("eigenes.acc@gmail.com", "DEIN_APP_PASSWORT_HIER")
+                    server.login("oli.dare.dev@gmail.com", "lued hciv sidi qlty")
                     server.send_message(msg)
                 st.success("Danke für dein Feedback! 🙏")
             except Exception as e:
