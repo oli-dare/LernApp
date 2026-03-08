@@ -430,7 +430,7 @@ def generate_srs_cards(topic, num_cards):
         f"Exakt {num_cards} Karten, nur das JSON-Array."
     )
     try:
-        model = genai.GenerativeModel("gemini-2.0-flash-lite-preview")
+        model = genai.GenerativeModel("gemini-3.1-flash-lite-preview")
         response = model.generate_content(prompt)
         raw = response.text.strip()
         if raw.startswith("```"):
