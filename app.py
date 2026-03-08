@@ -1031,12 +1031,17 @@ elif active_page == "ranking":
 # SEITE: EINSTELLUNGEN
 # =============================================================================
 elif active_page == "settings":
+
     st.markdown('<div class="headline">Einstellungen</div>', unsafe_allow_html=True)
 
-    with st.container(border=True):
-        st.markdown("##### 📱 Geräte-ID")
-        st.code(_user_id, language=None)
-        st.caption("Diese ID identifiziert dein Gerät eindeutig. Teile sie nicht mit anderen.")
+    # --- Feedback Box ---
+    st.markdown("##### 💬 Feedback")
+    with st.form("feedback_form"):
+        feedback_text = st.text_area("Was sollte ich an StudyFyn verbessern?", placeholder="Dein Feedback hilft mir sehr!", key="feedback_text")
+        submitted = st.form_submit_button("Absenden")
+        if submitted and feedback_text.strip():
+            st.success("Danke für dein Feedback! 🙏")
+            # Hier könntest du das Feedback speichern oder per Mail senden
 
     st.markdown("##### 👤 Profil")
     with st.container(border=True):
@@ -1097,6 +1102,11 @@ elif active_page == "settings":
     st.markdown("##### ℹ️ Über StudyFyn")
     with st.container(border=True):
         st.markdown("**StudyFyn** · Version 1.0 MVP")
-        st.caption("Dein persönlicher KI-Lernhelfer. Buchseiten digitalisieren, "
-                   "Karteikarten erstellen, intelligent lernen.")
+        st.caption("Dein persönlicher KI-Lernhelfer. Buchseiten digitalisieren, Karteikarten erstellen, intelligent lernen.")
         st.caption("© 2026 StudyFyn")
+
+    # --- Geräte-ID ganz nach hinten ---
+    with st.container(border=True):
+        st.markdown("##### 📱 Geräte-ID")
+        st.code(_user_id, language=None)
+        st.caption("Diese ID identifiziert dein Gerät eindeutig. Teile sie nicht mit anderen.")
