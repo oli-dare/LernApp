@@ -15,6 +15,8 @@ import streamlit as st
 import streamlit.components.v1 as st_components
 import google.generativeai as genai
 from PIL import Image, ImageOps
+import smtplib
+from email.mime.text import MIMEText
 
 # =============================================================================
 # KONFIGURATION
@@ -1040,8 +1042,23 @@ elif active_page == "settings":
         feedback_text = st.text_area("Was sollte ich an StudyFyn verbessern?", placeholder="Dein Feedback hilft mir sehr!", key="feedback_text")
         submitted = st.form_submit_button("Absenden")
         if submitted and feedback_text.strip():
-            st.success("Danke für dein Feedback! 🙏")
-            # Hier könntest du das Feedback speichern oder per Mail senden
+            try:
+                msg = MIMEText(f"Feedback von StudyFyn\n\nGeräte-ID: {_user_id}\n\n{feedback_text}")
+                msg["Subject"] = "StudyFyn Feedback"
+                msg["From"] = "studyfyn-feedback@no-reply.com"
+                msg["To"] = "eigenes.acc@gmail.com"
+                # Lokaler SMTP-Server oder Gmail SMTP (hier als Beispiel, ggf. anpassen)
+                with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+                    server.login("eigenes.acc@gmail.com", "DEIN_APP_PASSWORT_HIER")
+                    server.send_message(msg)
+                st.success("Danke für dein Feedback! 🙏")
+            except Exception as e:
+                st.error(f"Fehler beim Senden des Feedbacks: {e}")
+
+    with st.container(border=True):
+        st.markdown("##### 📱 Geräte-ID")
+        st.code(_user_id, language=None)
+        st.caption("Diese ID identifiziert dein Gerät eindeutig. Teile sie nicht mit anderen.")
 
     st.markdown("##### 👤 Profil")
     with st.container(border=True):
@@ -1080,7 +1097,7 @@ elif active_page == "settings":
     st.markdown("""
     <div class="premium-box">
         <div style="font-size:1.35em; font-weight:700; color:#ffd200; margin-bottom:0.6em;">
-            ✨ StudyFyn Premium
+            ✨ Premium DEMO
         </div>
         <div style="font-size:1.02em; color:#ddd; margin-bottom:0.8em;">
             Hol dir das volle Lernerlebnis – ohne Limits, ohne Werbung.
@@ -1097,16 +1114,11 @@ elif active_page == "settings":
         </div>
     </div>
     """, unsafe_allow_html=True)
-    st.button("💎 Premium freischalten", use_container_width=True, type="primary", key="btn_premium")
+    st.button("💎 Premium freischalten (DEMO)", use_container_width=True, type="primary", key="btn_premium")
 
     st.markdown("##### ℹ️ Über StudyFyn")
     with st.container(border=True):
         st.markdown("**StudyFyn** · Version 1.0 MVP")
-        st.caption("Dein persönlicher KI-Lernhelfer. Buchseiten digitalisieren, Karteikarten erstellen, intelligent lernen.")
+        st.caption("Dein persönlicher KI-Lernhelfer. Buchseiten digitalisieren, "
+                   "Karteikarten erstellen, intelligent lernen.")
         st.caption("© 2026 StudyFyn")
-
-    # --- Geräte-ID ganz nach hinten ---
-    with st.container(border=True):
-        st.markdown("##### 📱 Geräte-ID")
-        st.code(_user_id, language=None)
-        st.caption("Diese ID identifiziert dein Gerät eindeutig. Teile sie nicht mit anderen.")
