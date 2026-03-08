@@ -369,7 +369,7 @@ def analyze_image_with_ai(image):
         "Antworte zuerst mit dem Oberthema, dann die Unterpunkte jeweils in einer eigenen Zeile."
     )
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel("gemini-3.1-flash-lite-preview")
         response = model.generate_content([prompt, image])
         return [line.strip() for line in response.text.split("\n") if line.strip()]
     except Exception as e:
