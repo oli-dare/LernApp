@@ -403,7 +403,7 @@ def analyze_image_with_ai(image):
     image_part = {"mime_type": "image/jpeg", "data": img_bytes}
     try:
         model = genai.GenerativeModel(
-            "gemini-3.1-flash-lite-preview",
+            "gemini-2.5-flash",
             generation_config=genai.GenerationConfig(max_output_tokens=120, temperature=0.1),
         )
         response = model.generate_content([prompt, image_part])
@@ -432,7 +432,7 @@ def generate_srs_cards(topic, num_cards):
         f"Exakt {num_cards} Karten, nur das JSON-Array."
     )
     try:
-        model = genai.GenerativeModel("gemini-3.1-flash-lite-preview")
+        model = genai.GenerativeModel("gemini-2.5-flash")
         response = model.generate_content(prompt)
         raw = response.text.strip()
         if raw.startswith("```"):
