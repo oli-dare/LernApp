@@ -1,2 +1,6 @@
 ﻿__pycache__/
+*.db
+*.sqlite3
+secrets.toml
 .streamlit/secrets.toml
+LernApp-clean/
