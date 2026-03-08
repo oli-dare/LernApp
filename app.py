@@ -360,24 +360,25 @@ def build_card_queue(num_cards):
 
 
 def analyze_image_with_ai(image):
-    # Bild stark verkleinern → viel weniger Upload-Daten → massiv schneller
+    # Bild auf 600px verkleinern + auf JPEG-Bytes reduzieren
+    # → Bytes direkt an Gemini (kein doppeltes Encoding durch SDK)
     img = image.convert("RGB")
-    img.thumbnail((800, 800), Image.LANCZOS)
+    img.thumbnail((600, 600), Image.LANCZOS)
     buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=70, optimize=True)
-    buf.seek(0)
-    small_image = Image.open(buf)
+    img.save(buf, format="JPEG", quality=60, optimize=True)
+    img_bytes = buf.getvalue()
 
     prompt = (
         "Bild ansehen. Hauptthema (2-3 Wörter) + 3-5 Stichpunkte mit Emoji. "
         "Erste Zeile = Oberthema (kein Emoji). Danach Stichpunkte, je eine Zeile."
     )
+    image_part = {"mime_type": "image/jpeg", "data": img_bytes}
     try:
         model = genai.GenerativeModel(
             "gemini-3.1-flash-lite-preview",
             generation_config=genai.GenerationConfig(max_output_tokens=120, temperature=0.1),
         )
-        response = model.generate_content([prompt, small_image])
+        response = model.generate_content([prompt, image_part])
         return [line.strip() for line in response.text.split("\n") if line.strip()]
     except Exception as e:
         return [f"Fehler bei der KI-Analyse: {e}"]
