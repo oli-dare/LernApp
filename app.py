@@ -13,8 +13,6 @@ from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as st_components
 import google.generativeai as genai
-import easyocr
-import numpy as np
 from PIL import Image, ImageOps
 
 # =============================================================================
@@ -360,21 +358,22 @@ def build_card_queue(num_cards):
     return queue
 
 
-def text_to_bullets_with_emojis(text):
+def analyze_image_with_ai(image):
     prompt = (
-        "Fasse den folgenden Text als ein Oberthema (maximal 2-3 Wörter, keine Sätze!) mit 3-6 kurzen, knappen Unterpunkten zusammen. "
-        "Das Oberthema steht als Überschrift (ohne Emoji) oben. "
-        "Jeder Unterpunkt ist ein sehr kurzer Stichpunkt und beginnt mit einem passenden Emoji. "
+        "Schau dir dieses Bild an (Schulbuchseite, Notiz oder ähnliches). "
+        "Erkenne das Hauptthema (maximal 2-3 Wörter, keine Sätze!) und fasse den Inhalt "
+        "in 3-6 kurzen, knappen Stichpunkten zusammen. "
+        "Das Oberthema steht als erste Zeile oben (ohne Emoji). "
+        "Jeder Stichpunkt beginnt mit einem passenden Emoji. "
         "Keine Sätze, keine Erklärungen, nur Themenübersicht. "
-        "Antworte zuerst mit dem Oberthema, dann die Unterpunkte jeweils in einer eigenen Zeile.\n\n"
-        f"Text:\n{text}"
+        "Antworte zuerst mit dem Oberthema, dann die Unterpunkte jeweils in einer eigenen Zeile."
     )
     try:
-        model = genai.GenerativeModel("gemini-3.1-flash-lite-preview")
-        response = model.generate_content(prompt)
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        response = model.generate_content([prompt, image])
         return [line.strip() for line in response.text.split("\n") if line.strip()]
     except Exception as e:
-        return [f"Fehler bei der KI-Verarbeitung: {e}"]
+        return [f"Fehler bei der KI-Analyse: {e}"]
 
 
 def generate_srs_cards(topic, num_cards):
@@ -496,25 +495,14 @@ if active_page == "home":
                 image = image.rotate(90, expand=True)
             st.session_state.last_uploaded_file = uploaded_file
             st.session_state.last_image = image
-            try:
-                reader = easyocr.Reader(['de'])
-                # PIL-Image in numpy array konvertieren (RGB)
-                img_np = np.array(image.convert('RGB'))
-                result = reader.readtext(img_np)
-                text = ' '.join([item[1] for item in result])
-            except Exception as e:
-                text = "Fehler: " + str(e)
-            st.session_state.last_text = text
+            st.session_state.aufbereitet = False
 
         image = st.session_state.get("last_image")
-        text = st.session_state.get("last_text", "")
         st.image(image, caption="Hochgeladenes Bild", use_container_width=True)
-        st.subheader("Erkannter Text:")
-        st.write(text)
 
-        if st.button("Text didaktisch aufbereiten"):
-            with st.spinner("KI analysiert den Text..."):
-                bullets = text_to_bullets_with_emojis(text)
+        if st.button("🔍 Mit KI analysieren"):
+            with st.spinner("KI analysiert das Bild..."):
+                bullets = analyze_image_with_ai(image)
             st.session_state.aufbereitet = True
             st.session_state.bullets = bullets
 
