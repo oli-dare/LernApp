@@ -444,25 +444,33 @@ def generate_srs_cards(topic, num_cards):
         return []
 
 
-def generate_additional_cards(topic, existing_cards, num=10):
-    existing_facts = "\n".join(
-        f"- {c.get('merke_dir', '')}" for c in existing_cards if c.get("merke_dir")
+def generate_srs_cards_no_duplicates(topic, num_cards, existing_cards):
+    existing_questions = [c.get("frage", "") for c in existing_cards]
+    existing_facts = [c.get("merke_dir", "") for c in existing_cards]
+    existing_summary = "\n".join(
+        f"- {q}" for q in existing_questions if q
     )
     prompt = (
-        f"Erstelle genau {num} NEUE SRS-Lernkarten auf Deutsch zum Thema: '{topic}'. "
-        "Diese Karten ergänzen ein bestehendes Paket. "
-        "WICHTIG: Keine Inhalte wiederholen, die bereits in diesen Karten des Pakets stehen:\n"
-        f"{existing_facts}\n\n"
+        f"Erstelle genau {num_cards} SRS-Lernkarten auf Deutsch zum Thema: '{topic}'. "
+        "Die Karten MÜSSEN thematisch zum Oberthema passen. "
+        "WICHTIG: Es gibt bereits diese Karten im Paket – erzeuge KEINE Wiederholungen "
+        "und keine inhaltlich gleichen Fragen:\n"
+        f"{existing_summary}\n\n"
         "Antworte NUR mit einem JSON-Array, kein Markdown, keine Erklärung. "
         "Jedes Objekt hat folgende Felder:\n"
-        '[{"merke_dir": "Sehr kurzer, vollständiger Satz mit Subjekt. '
-        'Wichtige Begriffe fett (Markdown, z.B. **Begriff**). Kein Platzhalter, keine Liste.", '
-        '"frage": "Kurze, eindeutige, didaktisch sinnvolle Frage. '
-        'Wichtige Begriffe fett (Markdown). Kein Platzhalter.", '
+        '[{"merke_dir": "Sehr kurzer, aber vollständiger, verständlicher Satz mit Subjekt, keine Platzhalter, '
+        'keine Listen, keine Abkürzungen. Wichtige Begriffe fett (Markdown, z.B. **Französische Revolution**). '
+        'Beispiel: **Die Französische Revolution** begann 1789.", '
+        '"frage": "Sehr kurze, aber 100% eindeutige, relevante und didaktisch sinnvolle Frage, '
+        'keine offenen/groben Fragen, keine Platzhalter, keine Listen, keine Abkürzungen. '
+        'Wichtige Begriffe fett (Markdown). Beispiel: Wann begann die **Französische Revolution**?", '
         '"optionen": ["Option1", "Option2", "Option3"], "richtig": 0}]\n'
-        '"richtig" ist der 0-basierte Index der richtigen Antwort. '
-        'Alle Antwortoptionen ca. 2-6 Wörter lang, keine Labels. '
-        f"Exakt {num} neue, nicht-wiederholende Karten zum Thema '{topic}', nur das JSON-Array."
+        '"richtig" ist der 0-basierte Index der EINZIG richtigen Antwort in "optionen". '
+        'Die anderen Optionen sind klar falsch oder eindeutig abgrenzbar. '
+        'Alle Antwortoptionen sind ca. 2-6 Wörter lang, keine Labels wie A/B/C, keine Sätze, keine Erklärungen. '
+        'Die Fragen und Antworten müssen logisch, eindeutig und für das Oberthema wirklich relevant sein. '
+        'Keine Trivia, sondern Kernwissen.\n'
+        f"Exakt {num_cards} Karten, nur das JSON-Array."
     )
     try:
         model = genai.GenerativeModel("gemini-3.1-flash-lite-preview")
@@ -710,12 +718,11 @@ elif active_page == "packs":
                 with cols[1]:
                     with st.popover("⋯"):
                         if st.button("✏️ Umbenennen", key=f"rename_btn_{pack_id}", use_container_width=True):
-                            st.session_state.rename_pack_id = pack_id
+                            st.session_state[f"renaming_{pack_id}"] = True
                             st.rerun()
-                        if st.button("🤖 10 Karten hinzufügen", key=f"addcards_btn_{pack_id}", use_container_width=True):
-                            st.session_state.add_cards_pack_id = pack_id
+                        if st.button("➕ 10 KI-Karten", key=f"add10_btn_{pack_id}", use_container_width=True):
+                            st.session_state[f"adding_cards_{pack_id}"] = True
                             st.rerun()
-                        st.divider()
                         if st.button("📋 Duplizieren", key=f"dup_{pack_id}", use_container_width=True):
                             db_save_pack(name + " (Kopie)", pack["cards"], pack.get("folder_id"), _user_id)
                             st.rerun()
@@ -733,46 +740,37 @@ elif active_page == "packs":
                             db_delete_pack(pack_id)
                             st.rerun()
 
-        # ---- Paket umbenennen ----
-        if st.session_state.get("rename_pack_id"):
-            ren_id = st.session_state.rename_pack_id
-            ren_pack = next((p for p in packs if p["id"] == ren_id), None)
-            if ren_pack:
-                st.markdown("**✏️ Paketname ändern**")
-                with st.form(f"rename_form_{ren_id}"):
-                    new_name = st.text_input("Neuer Name:", value=ren_pack["name"])
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        if st.form_submit_button("💾 Speichern", use_container_width=True):
-                            if new_name.strip():
+                # ---- Umbenennen (erscheint unter dem Paket) ----
+                if st.session_state.get(f"renaming_{pack_id}"):
+                    new_pack_name = st.text_input("Neuer Paketname:", value=name, key=f"rename_{pack_id}")
+                    rc1, rc2 = st.columns(2)
+                    with rc1:
+                        if st.button("💾 Speichern", key=f"save_rename_{pack_id}", use_container_width=True):
+                            if new_pack_name.strip() and new_pack_name != name:
                                 conn = get_db()
-                                conn.execute('UPDATE packs SET name = ? WHERE id = ?', (new_name.strip(), ren_id))
+                                conn.execute('UPDATE packs SET name = ? WHERE id = ?', (new_pack_name.strip(), pack_id))
                                 conn.commit()
                                 conn.close()
-                            st.session_state.pop("rename_pack_id")
+                            st.session_state.pop(f"renaming_{pack_id}", None)
                             st.rerun()
-                    with c2:
-                        if st.form_submit_button("Abbrechen", use_container_width=True):
-                            st.session_state.pop("rename_pack_id")
+                    with rc2:
+                        if st.button("❌ Abbrechen", key=f"cancel_rename_{pack_id}", use_container_width=True):
+                            st.session_state.pop(f"renaming_{pack_id}", None)
                             st.rerun()
 
-        # ---- 10 Karten per KI hinzufügen ----
-        if st.session_state.get("add_cards_pack_id"):
-            ac_id = st.session_state.add_cards_pack_id
-            ac_pack = next((p for p in packs if p["id"] == ac_id), None)
-            if ac_pack:
-                with st.spinner(f"🤖 Erstelle 10 neue Karten für „{ac_pack['name']}"…"):
-                    existing_cards = json.loads(ac_pack["cards"])
-                    new_cards = generate_additional_cards(ac_pack["name"], existing_cards, 10)
-                if new_cards:
-                    updated = existing_cards + new_cards
-                    conn = get_db()
-                    conn.execute('UPDATE packs SET cards = ? WHERE id = ?', (json.dumps(updated, ensure_ascii=False), ac_id))
-                    conn.commit()
-                    conn.close()
-                    st.success(f"✅ {len(new_cards)} neue Karten hinzugefügt!")
-            st.session_state.pop("add_cards_pack_id")
-            st.rerun()
+                # ---- 10 KI-Karten hinzufügen ----
+                if st.session_state.get(f"adding_cards_{pack_id}"):
+                    st.info(f"🤖 Erstelle 10 neue Karten zum Thema **{name}** ohne Wiederholungen…")
+                    new_cards = generate_srs_cards_no_duplicates(name, 10, cards)
+                    if new_cards:
+                        all_cards = cards + new_cards
+                        conn = get_db()
+                        conn.execute('UPDATE packs SET cards = ? WHERE id = ?', (json.dumps(all_cards), pack_id))
+                        conn.commit()
+                        conn.close()
+                        st.success(f"✅ {len(new_cards)} neue Karten hinzugefügt!")
+                    st.session_state.pop(f"adding_cards_{pack_id}", None)
+                    st.rerun()
 
     else:
         # =================================================================
