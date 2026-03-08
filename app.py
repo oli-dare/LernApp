@@ -2,6 +2,7 @@
 # StudyFyn – KI-Lernhelfer
 # =============================================================================
 
+import io
 import json
 import os
 import random
@@ -359,18 +360,24 @@ def build_card_queue(num_cards):
 
 
 def analyze_image_with_ai(image):
+    # Bild stark verkleinern → viel weniger Upload-Daten → massiv schneller
+    img = image.convert("RGB")
+    img.thumbnail((800, 800), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=70, optimize=True)
+    buf.seek(0)
+    small_image = Image.open(buf)
+
     prompt = (
-        "Schau dir dieses Bild an (Schulbuchseite, Notiz oder ähnliches). "
-        "Erkenne das Hauptthema (maximal 2-3 Wörter, keine Sätze!) und fasse den Inhalt "
-        "in 3-6 kurzen, knappen Stichpunkten zusammen. "
-        "Das Oberthema steht als erste Zeile oben (ohne Emoji). "
-        "Jeder Stichpunkt beginnt mit einem passenden Emoji. "
-        "Keine Sätze, keine Erklärungen, nur Themenübersicht. "
-        "Antworte zuerst mit dem Oberthema, dann die Unterpunkte jeweils in einer eigenen Zeile."
+        "Bild ansehen. Hauptthema (2-3 Wörter) + 3-5 Stichpunkte mit Emoji. "
+        "Erste Zeile = Oberthema (kein Emoji). Danach Stichpunkte, je eine Zeile."
     )
     try:
-        model = genai.GenerativeModel("gemini-3.1-flash-lite-preview")
-        response = model.generate_content([prompt, image])
+        model = genai.GenerativeModel(
+            "gemini-3.1-flash-lite-preview",
+            generation_config=genai.GenerationConfig(max_output_tokens=120, temperature=0.1),
+        )
+        response = model.generate_content([prompt, small_image])
         return [line.strip() for line in response.text.split("\n") if line.strip()]
     except Exception as e:
         return [f"Fehler bei der KI-Analyse: {e}"]
