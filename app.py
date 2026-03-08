@@ -23,7 +23,10 @@ from PIL import Image, ImageOps
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 
-DB_PATH = os.environ.get("STUDYFYN_DB_PATH") or str(Path(__file__).parent / "studyfyn_data.db")
+# Home-Dir überlebt Redeployments; App-Dir wird bei jedem Push gelöscht
+_db_dir = Path.home() / ".studyfyn"
+_db_dir.mkdir(parents=True, exist_ok=True)
+DB_PATH = os.environ.get("STUDYFYN_DB_PATH") or str(_db_dir / "studyfyn_data.db")
 
 # =============================================================================
 # DATENBANK
@@ -223,28 +226,51 @@ def db_count_packs_in_folder(folder_id, user_id='legacy'):
 st_components.html("""
 <script>
 (function() {
-    var uid = localStorage.getItem('studyfyn_uid');
+    // UID aus localStorage ODER Cookie lesen (beide sichern gegenseitig ab)
+    function getCookie(n) {
+        var m = document.cookie.match('(^|;)\\s*' + n + '\\s*=\\s*([^;]+)');
+        return m ? m.pop() : null;
+    }
+    var uid = localStorage.getItem('studyfyn_uid') || getCookie('studyfyn_uid');
     if (!uid) {
-        uid = ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, function(c) {
-            return (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16);
+        uid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
         });
-        localStorage.setItem('studyfyn_uid', uid);
     }
-    var url = new URL(window.parent.location.href);
-    if (url.searchParams.get('uid') !== uid) {
-        url.searchParams.set('uid', uid);
-        window.parent.history.replaceState({}, '', url.toString());
-    }
+    // In beiden Speichern sichern
+    try { localStorage.setItem('studyfyn_uid', uid); } catch(e) {}
+    try { document.cookie = 'studyfyn_uid=' + uid + '; max-age=31536000; path=/; SameSite=Lax'; } catch(e) {}
+    // In URL-Parameter schreiben damit Python es lesen kann
+    try {
+        var url = new URL(window.parent.location.href);
+        if (url.searchParams.get('uid') !== uid) {
+            url.searchParams.set('uid', uid);
+            window.parent.history.replaceState({}, '', url.toString());
+        }
+    } catch(e) {}
 })();
 </script>
 """, height=0)
 
 _uid_from_url = st.query_params.get("uid", None)
+
+# Cookie-Fallback (Streamlit 1.37+)
+if not _uid_from_url:
+    try:
+        _uid_from_url = st.context.cookies.get("studyfyn_uid")
+        if _uid_from_url:
+            st.query_params["uid"] = _uid_from_url
+    except Exception:
+        pass
+
 if _uid_from_url:
     st.session_state["user_id"] = _uid_from_url
 elif "user_id" not in st.session_state:
-    if not st.session_state.get("_uid_wait"):
-        st.session_state["_uid_wait"] = True
+    # Bis zu 3 Zyklen warten damit das JS die UID injizieren kann
+    _wait = st.session_state.get("_uid_wait", 0)
+    if _wait < 3:
+        st.session_state["_uid_wait"] = _wait + 1
         st.rerun()
     else:
         _fallback_id = str(uuid.uuid4())
@@ -580,18 +606,17 @@ elif active_page == "packs":
                     st.session_state.pop("current_folder", None)
                     st.rerun()
         else:
-            st.markdown("""
-            <div class="lib-header-row">
-                <span class="headline">Bibliothek</span>
-                <span style="display:inline-block;">""", unsafe_allow_html=True)
-            with st.popover("➕"):
-                if st.button("📁 Neuer Ordner", use_container_width=True):
-                    st.session_state.creating_folder = True
-                    st.rerun()
-                if st.button("📦 Neues Paket", use_container_width=True):
-                    st.query_params["page"] = "home"
-                    st.rerun()
-            st.markdown("""</span></div>""", unsafe_allow_html=True)
+            _lh1, _lh2 = st.columns([10, 1])
+            with _lh1:
+                st.markdown('<div class="headline">Bibliothek</div>', unsafe_allow_html=True)
+            with _lh2:
+                with st.popover("➕"):
+                    if st.button("📁 Neuer Ordner", use_container_width=True):
+                        st.session_state.creating_folder = True
+                        st.rerun()
+                    if st.button("📦 Neues Paket", use_container_width=True):
+                        st.query_params["page"] = "home"
+                        st.rerun()
 
         # ---- Ordner erstellen ----
         if st.session_state.get("creating_folder"):
@@ -752,12 +777,19 @@ elif active_page == "packs":
                     correct_answer = card["optionen"][card["richtig"]]
 
                     if cur_streak < 4:
-                        # Multiple Choice
+                        # Multiple Choice – Optionen einmalig mischen, Reihenfolge pro Karte merken
+                        _shuf_key = f"shuf_{pid}_{card_idx}_{pos}"
+                        if _shuf_key not in st.session_state:
+                            _opts = list(card["optionen"])
+                            _correct_val = _opts[card["richtig"]]
+                            random.shuffle(_opts)
+                            st.session_state[_shuf_key] = (_opts, _opts.index(_correct_val))
+                        _opts, _correct_idx = st.session_state[_shuf_key]
                         st.markdown(f"### {card['frage']}")
                         st.write("")
-                        for i, option in enumerate(card["optionen"]):
+                        for i, option in enumerate(_opts):
                             if st.button(option, key=f"opt_{pos}_{i}", use_container_width=True):
-                                handle_answer(i == card["richtig"], card_idx, streak, mastered, xp, cur_streak, pid)
+                                handle_answer(i == _correct_idx, card_idx, streak, mastered, xp, cur_streak, pid)
 
                     elif cur_streak < 6:
                         # Lückentext
