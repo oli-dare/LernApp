@@ -1,6 +1,9 @@
 # Secrets – darf NIEMALS ins Repository!
 secrets.toml
+**/secrets.toml
 .streamlit/secrets.toml
+*.env
+.env*
 
 # Python
 __pycache__/
