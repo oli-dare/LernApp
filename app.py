@@ -979,8 +979,13 @@ elif active_page == "settings":
             st.session_state["sett_name"] = name_to_save
             st.session_state["loaded_user_id"] = None
             db_set_username(name_to_save, _user_id)
-            st.success(f"Name gespeichert: {name_to_save}")
+            st.session_state["show_name_saved"] = True
             st.rerun()
+        if st.session_state.get("show_name_saved"):
+            st.success(f"Name gespeichert: {st.session_state.get('sett_name','Du')}")
+            # Erfolgsmeldung bleibt bis Seite gewechselt wird
+        if active_page != "settings" and st.session_state.get("show_name_saved"):
+            st.session_state.pop("show_name_saved")
 
     st.markdown("##### 📚 Lerneinstellungen")
     with st.container(border=True):
