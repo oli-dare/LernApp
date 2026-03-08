@@ -1,0 +1,19 @@
+# Secrets – darf NIEMALS ins Repository!
+secrets.toml
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Datenbanken
+*.db
+*.sqlite3
+
+# Virtuelle Umgebung
+.venv/
+
+# Test
+test_gemini.py
+test_gemini_debug.py
